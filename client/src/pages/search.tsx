@@ -24,11 +24,13 @@ interface FilterState {
 export default function SearchPage() {
   const [filters, setFilters] = useState<FilterState>({
     conditions: [],
-    states: [],
-    facilities: [],
+    states: ["Kentucky"],
+    facilities: ["Louisville - Intermodal Dr. - Louisville, KY"],
     searchQuery: "",
   });
   const [sortBy, setSortBy] = useState("endDate");
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
   const isInitialMount = useRef(true);
 
   const queryClient = useQueryClient();
@@ -97,11 +99,12 @@ export default function SearchPage() {
   const handleClearFilters = () => {
     const clearedFilters: FilterState = {
       conditions: [],
-      states: [],
-      facilities: [],
+      states: ["Kentucky"],
+      facilities: ["Louisville - Intermodal Dr. - Louisville, KY"],
       searchQuery: "",
     };
     setFilters(clearedFilters);
+    setCurrentPage(1);
     queryClient.invalidateQueries({ queryKey: ["auction-items", "filtered"] });
   };
 
@@ -123,6 +126,17 @@ export default function SearchPage() {
         return new Date(a.endDate).getTime() - new Date(b.endDate).getTime();
     }
   });
+
+  // Pagination
+  const totalPages = Math.ceil(sortedItems.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedItems = sortedItems.slice(startIndex, endIndex);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filters, sortBy]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -148,7 +162,7 @@ export default function SearchPage() {
                   <div>
                     <h2 className="text-lg font-semibold text-foreground">Search Results</h2>
                     <p className="text-sm text-muted-foreground mt-1">
-                      Showing <span data-testid="item-count">{sortedItems.length}</span> items
+                      Showing <span data-testid="item-count">{startIndex + 1}-{Math.min(endIndex, sortedItems.length)}</span> of <span data-testid="total-items">{sortedItems.length}</span> items
                     </p>
                   </div>
                   <div className="flex items-center space-x-2">
@@ -192,13 +206,46 @@ export default function SearchPage() {
               <>
                 {/* Desktop Table View */}
                 <div className="hidden lg:block">
-                  <ItemsTable items={sortedItems} />
+                  <ItemsTable items={paginatedItems} />
                 </div>
 
                 {/* Mobile Card View */}
                 <div className="block lg:hidden">
-                  <ItemCards items={sortedItems} />
+                  <ItemCards items={paginatedItems} />
                 </div>
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <Card className="mt-6" data-testid="pagination-controls">
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <Button
+                          variant="outline"
+                          onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                          disabled={currentPage === 1}
+                          data-testid="button-previous-page"
+                        >
+                          Previous
+                        </Button>
+                        
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-muted-foreground">
+                            Page {currentPage} of {totalPages}
+                          </span>
+                        </div>
+
+                        <Button
+                          variant="outline"
+                          onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                          disabled={currentPage === totalPages}
+                          data-testid="button-next-page"
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
               </>
             )}
           </main>
