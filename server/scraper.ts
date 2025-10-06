@@ -68,8 +68,8 @@ export class BidFTScraper {
       const page = await browser.newPage();
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
       
-      console.log('Navigating to bidft.auction/search...');
-      await page.goto('https://www.bidft.auction/search', {
+      console.log('Navigating to bidfta.com/category/all/1...');
+      await page.goto('https://www.bidfta.com/category/all/1', {
         waitUntil: 'networkidle0',
         timeout: 45000
       });
@@ -94,95 +94,78 @@ export class BidFTScraper {
         let pageItems: any[] = [];
         try {
           pageItems = await page.evaluate(() => {
-        const results: any[] = [];
-        
-        const skipKeywords = [
-          'columns', 'header', 'navigation', 'nav', 'menu', 'footer',
-          'sidebar', 'filter', 'sort', 'search', 'banner'
-        ];
-        
-        const rows = Array.from(document.querySelectorAll('tr, div[role="row"], [class*="row"]'));
-        
-        rows.forEach((row: any) => {
-          try {
-            const text = row.textContent?.toLowerCase() || '';
+            const results: any[] = [];
             
-            if (skipKeywords.some(kw => text.includes(kw) && text.length < 100)) {
-              return;
-            }
-
-            const imgEl = row.querySelector('img');
-            if (!imgEl) return;
-
-            const imageUrl = imgEl.src || imgEl.getAttribute('data-src') || '';
-            if (!imageUrl || imageUrl.includes('placeholder') || imageUrl.includes('icon')) return;
+            const auctionLinks = Array.from(document.querySelectorAll('a[href*="/api/auction/"]'));
             
-            if (!imageUrl.includes('http')) return;
-
-            const cells = Array.from(row.querySelectorAll('td, div[role="cell"], [class*="cell"]'));
-            if (cells.length === 0) {
-              cells.push(row);
-            }
-
-            let title = '';
-            let currentPrice = '0';
-            let location = 'Unknown';
-            let condition = 'Good Condition';
-            let msrp = '0';
-            
-            cells.forEach((cell: any) => {
-              const cellText = cell.textContent?.trim() || '';
-              
-              if (!title && cellText.length > 20 && cellText.length < 300 && 
-                  !cellText.match(/^\d+$/) && !cellText.includes('$')) {
-                title = cellText.split('\n')[0].trim();
-              }
-              
-              const priceMatch = cellText.match(/\$(\d+\.?\d*)/g);
-              if (priceMatch && priceMatch.length >= 1) {
-                currentPrice = priceMatch[0].replace('$', '');
-                if (priceMatch.length >= 2) {
-                  msrp = priceMatch[1].replace('$', '');
+            auctionLinks.forEach((link: any) => {
+              try {
+                const container = link.closest('div, article, section') || link;
+                
+                const imgEls = container.querySelectorAll('img');
+                if (imgEls.length === 0) return;
+                
+                const imageUrl = imgEls[0].src || '';
+                if (!imageUrl || imageUrl.includes('placeholder')) return;
+                
+                const titleEl = container.querySelector('strong, h1, h2, h3, h4, h5, h6, [class*="title"]');
+                const title = titleEl?.textContent?.trim() || '';
+                if (!title || title.length < 5) return;
+                
+                const textContent = container.textContent || '';
+                
+                const locationMatch = textContent.match(/([A-Za-z\s]+)\s*-\s*([A-Za-z\s\.]+)\s*,\s*([A-Z]{2})/);
+                const location = locationMatch ? locationMatch[0] : 'Unknown';
+                const state = locationMatch ? locationMatch[3] : 'Unknown';
+                const facility = location;
+                
+                const auctionIdMatch = textContent.match(/Auction:\s*([A-Z0-9]+)/);
+                const auctionId = auctionIdMatch ? auctionIdMatch[1] : '';
+                
+                const itemCountMatch = textContent.match(/(\d+)\s+Items?/);
+                const itemCount = itemCountMatch ? parseInt(itemCountMatch[1]) : 0;
+                
+                const endDateMatch = textContent.match(/(October|November|December|January|February|March|April|May|June|July|August|September)\s+(\d+)[a-z]*(\d{2}:\d{2}\s*[AP]M)/);
+                let endDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+                
+                if (endDateMatch) {
+                  const monthStr = endDateMatch[1];
+                  const day = parseInt(endDateMatch[2]);
+                  const time = endDateMatch[3];
+                  const year = new Date().getFullYear();
+                  const dateStr = `${monthStr} ${day}, ${year} ${time}`;
+                  const parsedDate = new Date(dateStr);
+                  if (!isNaN(parsedDate.getTime())) {
+                    endDate = parsedDate;
+                  }
                 }
-              }
-              
-              if (cellText.match(/(New|Like New|Good|As Is|Unknown)/i)) {
-                const match = cellText.match(/(New\/Like New|Like New|New|Good Condition|As Is)/i);
-                if (match) condition = match[0];
-              }
-              
-              if (cellText.match(/,\s*[A-Z]{2}/) || cellText.includes(' - ')) {
-                const parts = cellText.split('\n');
-                location = parts.find((p: string) => p.includes(',') || p.includes(' - ')) || location;
+                
+                const auctionUrl = link.href || '';
+                
+                const currentPrice = '0';
+                const condition = 'Good Condition';
+                const msrp = '0';
+                
+                results.push({
+                  title,
+                  description: `${title} - ${itemCount} items - ${auctionId}`,
+                  imageUrl,
+                  condition,
+                  location,
+                  state,
+                  facility,
+                  currentPrice,
+                  msrp,
+                  amazonSearchUrl: `https://www.amazon.com/s?k=${encodeURIComponent(title)}&tag=ftasearch-20`,
+                  auctionUrl,
+                  endDate
+                });
+              } catch (err) {
+                console.error('Error parsing auction item:', err);
               }
             });
-
-            const linkEl = row.querySelector('a[href*="bidfta.com"]') || 
-                          row.querySelector('a[href*="itemDetails"]');
-            const auctionUrl = linkEl?.href || '';
-
-            if (title && title.length > 10 && imageUrl && currentPrice !== '0') {
-              results.push({
-                title,
-                description: title,
-                imageUrl,
-                condition,
-                location,
-                state: location.match(/,\s*([A-Z]{2})/)?.[1] || 'Unknown',
-                facility: location,
-                currentPrice,
-                msrp: msrp !== '0' ? msrp : (parseFloat(currentPrice) * 2.5).toFixed(2),
-                amazonSearchUrl: `https://www.amazon.com/s?k=${encodeURIComponent(title)}&tag=ftasearch-20`,
-                auctionUrl,
-                endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-              });
-            }
-          } catch (err) {
-            console.error('Error parsing row:', err);
-          }
-        });
-        
-          return results;
+            
+            return results;
           });
         } catch (evalError) {
           console.log(`Error evaluating page ${currentPage}, skipping:`, evalError);
@@ -192,38 +175,27 @@ export class BidFTScraper {
         console.log(`Found ${pageItems.length} items on page ${currentPage}`);
         allItems = allItems.concat(pageItems);
         
-        let hasNextPage = false;
-        try {
-          hasNextPage = await page.evaluate(() => {
-          const nextButtons = Array.from(document.querySelectorAll('button, a'));
-          const nextButton = nextButtons.find(btn => {
-            const text = btn.textContent?.toLowerCase() || '';
-            const ariaLabel = btn.getAttribute('aria-label')?.toLowerCase() || '';
-            return text.includes('next') || ariaLabel.includes('next') || 
-                   text.includes('›') || text.includes('>');
-          });
-          if (nextButton && !nextButton.hasAttribute('disabled') && 
-              !nextButton.classList.contains('disabled')) {
-            (nextButton as HTMLElement).click();
-            return true;
-          }
-          return false;
-          });
-          
-          if (hasNextPage) {
-            await new Promise(resolve => setTimeout(resolve, 3000));
-          }
-        } catch (nextError) {
-          console.log('Error checking for next page, stopping pagination');
-          hasNextPage = false;
-        }
-        
-        if (!hasNextPage || pageItems.length === 0) {
-          console.log('No more pages to scrape');
+        if (pageItems.length === 0) {
+          console.log('No items found on this page, stopping');
           break;
         }
         
         currentPage++;
+        
+        if (currentPage <= maxPages) {
+          try {
+            const nextPageUrl = `https://www.bidfta.com/category/all/${currentPage}`;
+            console.log(`Navigating to page ${currentPage}: ${nextPageUrl}`);
+            await page.goto(nextPageUrl, {
+              waitUntil: 'networkidle0',
+              timeout: 45000
+            });
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } catch (navError) {
+            console.log('Error navigating to next page, stopping pagination');
+            break;
+          }
+        }
       }
       
       console.log(`Successfully scraped ${allItems.length} auction items across ${currentPage} pages`);
@@ -234,7 +206,7 @@ export class BidFTScraper {
       
       return allItems;
     } catch (error) {
-      console.error('Error scraping bidft.auction:', error);
+      console.error('Error scraping bidfta.com:', error);
       return [];
     } finally {
       await browser.close();

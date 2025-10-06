@@ -50,11 +50,11 @@ export class MemStorage implements IStorage {
 
   private async initializeWithScrapedData(): Promise<void> {
     try {
-      console.log('Fetching live auction data from bidft.auction...');
+      console.log('Fetching live auction data from bidfta.com...');
       const scrapedData = await scraper.getAuctionData();
       
       if (scrapedData.items.length > 0) {
-        console.log(`Successfully loaded ${scrapedData.items.length} items from bidft.auction`);
+        console.log(`Successfully loaded ${scrapedData.items.length} items from bidfta.com`);
         this.auctionItems.clear();
         scrapedData.items.forEach(item => {
           const id = randomUUID();
@@ -71,7 +71,7 @@ export class MemStorage implements IStorage {
 
   async refreshAuctionData(): Promise<void> {
     try {
-      console.log('Refreshing auction data from bidft.auction...');
+      console.log('Refreshing auction data from bidfta.com...');
       const scrapedData = await scraper.getAuctionData(true);
       
       if (scrapedData.items.length > 0) {
