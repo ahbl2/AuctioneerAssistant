@@ -76,8 +76,17 @@ export class BidFTScraper {
 
       await new Promise(resolve => setTimeout(resolve, 3000));
 
-      console.log('Extracting auction data...');
-      const items = await page.evaluate(() => {
+      console.log('Loading all pages of results...');
+      let allItems: any[] = [];
+      let currentPage = 1;
+      const maxPages = 50;
+      
+      while (currentPage <= maxPages) {
+        console.log(`Scraping page ${currentPage}...`);
+        
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const pageItems = await page.evaluate(() => {
         const results: any[] = [];
         
         const skipKeywords = [
@@ -166,11 +175,39 @@ export class BidFTScraper {
           }
         });
         
-        return results;
-      });
-
-      console.log(`Successfully scraped ${items.length} auction items`);
-      return items;
+          return results;
+        });
+        
+        console.log(`Found ${pageItems.length} items on page ${currentPage}`);
+        allItems = allItems.concat(pageItems);
+        
+        const hasNextPage = await page.evaluate(() => {
+          const nextButtons = Array.from(document.querySelectorAll('button, a'));
+          const nextButton = nextButtons.find(btn => {
+            const text = btn.textContent?.toLowerCase() || '';
+            const ariaLabel = btn.getAttribute('aria-label')?.toLowerCase() || '';
+            return text.includes('next') || ariaLabel.includes('next') || 
+                   text.includes('›') || text.includes('>');
+          });
+          if (nextButton && !nextButton.hasAttribute('disabled') && 
+              !nextButton.classList.contains('disabled')) {
+            (nextButton as HTMLElement).click();
+            return true;
+          }
+          return false;
+        });
+        
+        if (!hasNextPage || pageItems.length === 0) {
+          console.log('No more pages to scrape');
+          break;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        currentPage++;
+      }
+      
+      console.log(`Successfully scraped ${allItems.length} auction items across ${currentPage} pages`);
+      return allItems;
     } catch (error) {
       console.error('Error scraping bidft.auction:', error);
       return [];
