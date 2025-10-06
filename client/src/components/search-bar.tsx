@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
@@ -10,21 +10,21 @@ interface SearchBarProps {
 export default function SearchBar({ onSearch, initialValue = "" }: SearchBarProps) {
   const [query, setQuery] = useState(initialValue);
 
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      onSearch(query);
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [query, onSearch]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSearch(query);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newQuery = e.target.value;
-    setQuery(newQuery);
-    
-    // Debounce search
-    const timeoutId = setTimeout(() => {
-      onSearch(newQuery);
-    }, 300);
-
-    return () => clearTimeout(timeoutId);
+    setQuery(e.target.value);
   };
 
   return (
