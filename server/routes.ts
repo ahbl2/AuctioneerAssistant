@@ -73,6 +73,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Refresh auction data from bidft.auction
+  app.post("/api/auction-items/refresh", async (req, res) => {
+    try {
+      await storage.refreshAuctionData();
+      const items = await storage.getAuctionItems();
+      res.json({ message: "Auction data refreshed successfully", itemCount: items.length });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to refresh auction data" });
+    }
+  });
+
+  // Background refresh every 15 minutes
+  setInterval(async () => {
+    try {
+      console.log('Running background auction data refresh...');
+      await storage.refreshAuctionData();
+    } catch (error) {
+      console.error('Background refresh failed:', error);
+    }
+  }, 15 * 60 * 1000);
+
   const httpServer = createServer(app);
   return httpServer;
 }

@@ -1,5 +1,6 @@
 import { type AuctionItem, type InsertAuctionItem, type Location, type InsertLocation } from "@shared/schema";
 import { randomUUID } from "crypto";
+import { scraper } from "./scraper";
 
 export interface IStorage {
   // Auction Items
@@ -14,6 +15,7 @@ export interface IStorage {
     minPrice?: number;
     maxPrice?: number;
   }): Promise<AuctionItem[]>;
+  refreshAuctionData(): Promise<void>;
   
   // Locations
   getLocations(): Promise<Location[]>;
@@ -24,15 +26,59 @@ export interface IStorage {
 export class MemStorage implements IStorage {
   private auctionItems: Map<string, AuctionItem>;
   private locations: Map<string, Location>;
+  private isInitialized = false;
 
   constructor() {
     this.auctionItems = new Map();
     this.locations = new Map();
-    this.seedData();
+    this.seedLocations();
+    this.initializeWithScrapedData();
   }
 
-  private seedData() {
-    // Seed locations based on real data from BidFT
+  private async initializeWithScrapedData() {
+    if (this.isInitialized) return;
+    this.isInitialized = true;
+
+    try {
+      console.log('Fetching live auction data from bidft.auction...');
+      const scrapedData = await scraper.getAuctionData();
+      
+      if (scrapedData.items.length > 0) {
+        console.log(`Successfully loaded ${scrapedData.items.length} items from bidft.auction`);
+        this.auctionItems.clear();
+        scrapedData.items.forEach(item => {
+          const id = randomUUID();
+          this.auctionItems.set(id, { ...item, id });
+        });
+      } else {
+        console.log('No items scraped, using fallback seed data');
+        this.seedFallbackData();
+      }
+    } catch (error) {
+      console.error('Error loading scraped data, using fallback:', error);
+      this.seedFallbackData();
+    }
+  }
+
+  async refreshAuctionData(): Promise<void> {
+    try {
+      console.log('Refreshing auction data from bidft.auction...');
+      const scrapedData = await scraper.getAuctionData(true);
+      
+      if (scrapedData.items.length > 0) {
+        this.auctionItems.clear();
+        scrapedData.items.forEach(item => {
+          const id = randomUUID();
+          this.auctionItems.set(id, { ...item, id });
+        });
+        console.log(`Refreshed ${scrapedData.items.length} auction items`);
+      }
+    } catch (error) {
+      console.error('Error refreshing auction data:', error);
+    }
+  }
+
+  private seedLocations() {
     const locationData = [
       {
         id: randomUUID(),
@@ -93,8 +139,9 @@ export class MemStorage implements IStorage {
     ];
 
     locationData.forEach(loc => this.locations.set(loc.id, loc));
+  }
 
-    // Seed auction items with real data from BidFT
+  private seedFallbackData() {
     const auctionItemsData = [
       {
         id: randomUUID(),
