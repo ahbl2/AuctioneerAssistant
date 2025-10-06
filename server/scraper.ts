@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer';
 import type { InsertAuctionItem } from '@shared/schema';
+import { execSync } from 'child_process';
 
 export interface ScrapedAuctionData {
   items: InsertAuctionItem[];
@@ -44,9 +45,23 @@ export class BidFTScraper {
   }
 
   private async scrapeAuctions(): Promise<InsertAuctionItem[]> {
+    let chromiumPath = '';
+    try {
+      chromiumPath = execSync('which chromium || which chromium-browser', { encoding: 'utf8' }).trim();
+    } catch {
+      chromiumPath = '/nix/store/zi4f80l169xlmivz8vja8wlphq74qqk0-chromium-125.0.6422.141/bin/chromium';
+    }
+
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      executablePath: chromiumPath,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu'
+      ]
     });
 
     try {
@@ -55,68 +70,99 @@ export class BidFTScraper {
       
       console.log('Navigating to bidft.auction/search...');
       await page.goto('https://www.bidft.auction/search', {
-        waitUntil: 'networkidle2',
-        timeout: 30000
+        waitUntil: 'networkidle0',
+        timeout: 45000
       });
 
-      console.log('Waiting for auction items to load...');
-      await page.waitForSelector('[class*="Card"]', { timeout: 15000 });
-      
-      await page.waitForFunction(() => {
-        const cards = document.querySelectorAll('[class*="Card"]');
-        return cards.length > 5;
-      }, { timeout: 10000 });
+      await new Promise(resolve => setTimeout(resolve, 3000));
 
       console.log('Extracting auction data...');
       const items = await page.evaluate(() => {
         const results: any[] = [];
-        const cards = document.querySelectorAll('[class*="Card"]');
         
-        cards.forEach((card: any) => {
+        const skipKeywords = [
+          'columns', 'header', 'navigation', 'nav', 'menu', 'footer',
+          'sidebar', 'filter', 'sort', 'search', 'banner'
+        ];
+        
+        const rows = Array.from(document.querySelectorAll('tr, div[role="row"], [class*="row"]'));
+        
+        rows.forEach((row: any) => {
           try {
-            const titleEl = card.querySelector('h3, [class*="title"], [class*="Title"]');
-            const title = titleEl?.textContent?.trim();
+            const text = row.textContent?.toLowerCase() || '';
             
-            const descEl = card.querySelector('p, [class*="description"], [class*="Description"]');
-            const description = descEl?.textContent?.trim();
+            if (skipKeywords.some(kw => text.includes(kw) && text.length < 100)) {
+              return;
+            }
+
+            const imgEl = row.querySelector('img');
+            if (!imgEl) return;
+
+            const imageUrl = imgEl.src || imgEl.getAttribute('data-src') || '';
+            if (!imageUrl || imageUrl.includes('placeholder') || imageUrl.includes('icon')) return;
             
-            const imgEl = card.querySelector('img');
-            const imageUrl = imgEl?.src || imgEl?.getAttribute('data-src') || '';
+            if (!imageUrl.includes('http')) return;
+
+            const cells = Array.from(row.querySelectorAll('td, div[role="cell"], [class*="cell"]'));
+            if (cells.length === 0) {
+              cells.push(row);
+            }
+
+            let title = '';
+            let currentPrice = '0';
+            let location = 'Unknown';
+            let condition = 'Good Condition';
+            let msrp = '0';
             
-            const priceEl = card.querySelector('[class*="price"], [class*="Price"]');
-            const priceText = priceEl?.textContent?.trim() || '0';
-            const currentPrice = priceText.replace(/[^0-9.]/g, '') || '0';
-            
-            const linkEl = card.querySelector('a[href*="bidfta.com"]');
+            cells.forEach((cell: any) => {
+              const cellText = cell.textContent?.trim() || '';
+              
+              if (!title && cellText.length > 20 && cellText.length < 300 && 
+                  !cellText.match(/^\d+$/) && !cellText.includes('$')) {
+                title = cellText.split('\n')[0].trim();
+              }
+              
+              const priceMatch = cellText.match(/\$(\d+\.?\d*)/g);
+              if (priceMatch && priceMatch.length >= 1) {
+                currentPrice = priceMatch[0].replace('$', '');
+                if (priceMatch.length >= 2) {
+                  msrp = priceMatch[1].replace('$', '');
+                }
+              }
+              
+              if (cellText.match(/(New|Like New|Good|As Is|Unknown)/i)) {
+                const match = cellText.match(/(New\/Like New|Like New|New|Good Condition|As Is)/i);
+                if (match) condition = match[0];
+              }
+              
+              if (cellText.match(/,\s*[A-Z]{2}/) || cellText.includes(' - ')) {
+                const parts = cellText.split('\n');
+                location = parts.find((p: string) => p.includes(',') || p.includes(' - ')) || location;
+              }
+            });
+
+            const linkEl = row.querySelector('a[href*="bidfta.com"]') || 
+                          row.querySelector('a[href*="itemDetails"]');
             const auctionUrl = linkEl?.href || '';
-            
-            const conditionEl = card.querySelector('[class*="condition"], [class*="Condition"]');
-            const condition = conditionEl?.textContent?.trim() || 'Unknown';
-            
-            const locationEl = card.querySelector('[class*="location"], [class*="Location"]');
-            const locationText = locationEl?.textContent?.trim() || '';
-            
-            const stateMatch = locationText.match(/,\s*([A-Z]{2})\s*$/);
-            const state = stateMatch ? stateMatch[1] : 'Unknown';
-            
-            if (title && imageUrl) {
+
+            if (title && title.length > 10 && imageUrl && currentPrice !== '0') {
               results.push({
                 title,
-                description: description || title,
+                description: title,
                 imageUrl,
                 condition,
-                location: locationText || 'Unknown',
-                state,
-                facility: locationText || 'Unknown',
+                location,
+                state: location.match(/,\s*([A-Z]{2})/)?.[1] || 'Unknown',
+                facility: location,
                 currentPrice,
-                msrp: (parseFloat(currentPrice) * 2).toFixed(2),
+                msrp: msrp !== '0' ? msrp : (parseFloat(currentPrice) * 2.5).toFixed(2),
                 amazonSearchUrl: `https://www.amazon.com/s?k=${encodeURIComponent(title)}&tag=ftasearch-20`,
                 auctionUrl,
                 endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
               });
             }
           } catch (err) {
-            console.error('Error parsing card:', err);
+            console.error('Error parsing row:', err);
           }
         });
         
