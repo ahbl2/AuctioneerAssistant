@@ -109,15 +109,28 @@ export class BidFTScraper {
                 if (!imageUrl || imageUrl.includes('placeholder')) return;
                 
                 const titleEl = container.querySelector('strong, h1, h2, h3, h4, h5, h6, [class*="title"]');
-                const title = titleEl?.textContent?.trim() || '';
+                let title = titleEl?.textContent?.trim() || '';
                 if (!title || title.length < 5) return;
                 
                 const textContent = container.textContent || '';
                 
-                const locationMatch = textContent.match(/([A-Za-z\s]+)\s*-\s*([A-Za-z\s\.]+)\s*,\s*([A-Z]{2})/);
-                const location = locationMatch ? locationMatch[0] : 'Unknown';
-                const state = locationMatch ? locationMatch[3] : 'Unknown';
-                const facility = location;
+                const locationMatch = textContent.match(/([A-Za-z\s]+)\s*-\s*([A-Za-z\s\.0-9\-]+)\s*,\s*([A-Z]{2})/);
+                let location = 'Unknown';
+                let state = 'Unknown';
+                let facility = 'Unknown';
+                
+                if (locationMatch) {
+                  const city = locationMatch[1].trim();
+                  const street = locationMatch[2].trim();
+                  state = locationMatch[3].trim();
+                  
+                  if (title.includes(city)) {
+                    title = title.replace(new RegExp(`${city}.*`, 'i'), '').trim();
+                  }
+                  
+                  facility = `${city} - ${street} - ${city}, ${state}`;
+                  location = `${city} - ${street}, ${state}`;
+                }
                 
                 const auctionIdMatch = textContent.match(/Auction:\s*([A-Z0-9]+)/);
                 const auctionId = auctionIdMatch ? auctionIdMatch[1] : '';
