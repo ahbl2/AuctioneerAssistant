@@ -70,17 +70,21 @@ export default function SearchPage() {
            filters.searchQuery.trim() !== "";
   };
 
-  const handleSearch = (query: string) => {
-    const newFilters = { ...filters, searchQuery: query };
-    setFilters(newFilters);
-    filterMutation.mutate(newFilters);
-  };
+  const handleSearch = useCallback((query: string) => {
+    setFilters(prev => {
+      const newFilters = { ...prev, searchQuery: query };
+      filterMutation.mutate(newFilters);
+      return newFilters;
+    });
+  }, [filterMutation]);
 
-  const handleFilterChange = (newFilters: Partial<FilterState>) => {
-    const updatedFilters = { ...filters, ...newFilters };
-    setFilters(updatedFilters);
-    filterMutation.mutate(updatedFilters);
-  };
+  const handleFilterChange = useCallback((newFilters: Partial<FilterState>) => {
+    setFilters(prev => {
+      const updatedFilters = { ...prev, ...newFilters };
+      filterMutation.mutate(updatedFilters);
+      return updatedFilters;
+    });
+  }, [filterMutation]);
 
   const handleClearFilters = () => {
     const clearedFilters: FilterState = {

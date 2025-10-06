@@ -23,7 +23,7 @@ export default function SearchBar({ onSearch, initialValue = "" }: SearchBarProp
     }, 300);
 
     return () => clearTimeout(timeoutId);
-  }, [query]);
+  }, [query, onSearch]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
