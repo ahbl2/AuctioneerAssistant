@@ -84,9 +84,16 @@ export class BidFTScraper {
       while (currentPage <= maxPages) {
         console.log(`Scraping page ${currentPage}...`);
         
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        const pageItems = await page.evaluate(() => {
+        try {
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } catch (scrollError) {
+          console.log('Error scrolling, continuing...');
+        }
+        
+        let pageItems: any[] = [];
+        try {
+          pageItems = await page.evaluate(() => {
         const results: any[] = [];
         
         const skipKeywords = [
@@ -176,12 +183,18 @@ export class BidFTScraper {
         });
         
           return results;
-        });
+          });
+        } catch (evalError) {
+          console.log(`Error evaluating page ${currentPage}, skipping:`, evalError);
+          break;
+        }
         
         console.log(`Found ${pageItems.length} items on page ${currentPage}`);
         allItems = allItems.concat(pageItems);
         
-        const hasNextPage = await page.evaluate(() => {
+        let hasNextPage = false;
+        try {
+          hasNextPage = await page.evaluate(() => {
           const nextButtons = Array.from(document.querySelectorAll('button, a'));
           const nextButton = nextButtons.find(btn => {
             const text = btn.textContent?.toLowerCase() || '';
@@ -195,18 +208,30 @@ export class BidFTScraper {
             return true;
           }
           return false;
-        });
+          });
+          
+          if (hasNextPage) {
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          }
+        } catch (nextError) {
+          console.log('Error checking for next page, stopping pagination');
+          hasNextPage = false;
+        }
         
         if (!hasNextPage || pageItems.length === 0) {
           console.log('No more pages to scrape');
           break;
         }
         
-        await new Promise(resolve => setTimeout(resolve, 3000));
         currentPage++;
       }
       
       console.log(`Successfully scraped ${allItems.length} auction items across ${currentPage} pages`);
+      
+      if (allItems.length === 0) {
+        console.log('No items scraped from any page');
+      }
+      
       return allItems;
     } catch (error) {
       console.error('Error scraping bidft.auction:', error);
