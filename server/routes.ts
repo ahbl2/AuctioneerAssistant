@@ -36,28 +36,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         minPrice: z.number().optional(),
         maxPrice: z.number().optional(),
         searchQuery: z.string().optional(),
+        sortBy: z.string().optional(),
+        page: z.number().optional(),
+        limit: z.number().optional(),
       });
 
       const filters = filterSchema.parse(req.body);
       
-      let items = await storage.filterAuctionItems({
+      const result = await storage.filterAuctionItems({
         conditions: filters.conditions,
         states: filters.states,
         facilities: filters.facilities,
         minPrice: filters.minPrice,
         maxPrice: filters.maxPrice,
+        searchQuery: filters.searchQuery,
+        sortBy: filters.sortBy,
+        page: filters.page,
+        limit: filters.limit,
       });
 
-      // Apply search query if provided
-      if (filters.searchQuery && filters.searchQuery.trim()) {
-        const searchTerm = filters.searchQuery.toLowerCase();
-        items = items.filter(item => 
-          item.title.toLowerCase().includes(searchTerm) ||
-          item.description.toLowerCase().includes(searchTerm)
-        );
-      }
-
-      res.json(items);
+      res.json(result);
     } catch (error) {
       res.status(400).json({ message: "Invalid filter parameters" });
     }

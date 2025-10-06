@@ -21,6 +21,14 @@ interface FilterState {
   searchQuery: string;
 }
 
+interface PaginatedResponse {
+  items: AuctionItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 export default function SearchPage() {
   const [filters, setFilters] = useState<FilterState>({
     conditions: [],
@@ -31,39 +39,24 @@ export default function SearchPage() {
   const [sortBy, setSortBy] = useState("endDate");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
-  const isInitialMount = useRef(true);
-
-  const queryClient = useQueryClient();
 
   // Fetch locations for filter options
   const { data: locations = [] } = useQuery<Location[]>({
     queryKey: ["/api/locations"],
   });
 
-  // Filter mutation
-  const filterMutation = useMutation({
-    mutationFn: async (filterData: FilterState) => {
-      const response = await apiRequest("POST", "/api/auction-items/filter", filterData);
-      return response.json();
-    },
-    onSuccess: (data) => {
-      queryClient.setQueryData(["auction-items", "filtered"], data);
-    },
-  });
-  
-  const { mutate: mutateFilters, isPending: isFilterPending } = filterMutation;
-
-  // Get filtered items or all items
-  const { data: items = [], isLoading } = useQuery<AuctionItem[]>({
-    queryKey: ["auction-items", "filtered"],
+  // Fetch paginated items
+  const { data: paginatedData, isLoading } = useQuery<PaginatedResponse>({
+    queryKey: ["auction-items", "paginated", filters, sortBy, currentPage],
     queryFn: async () => {
-      if (hasActiveFilters(filters)) {
-        return filterMutation.mutateAsync(filters);
-      }
-      const response = await fetch("/api/auction-items");
+      const response = await apiRequest("POST", "/api/auction-items/filter", {
+        ...filters,
+        sortBy,
+        page: currentPage,
+        limit: itemsPerPage,
+      });
       return response.json();
     },
-    enabled: !isFilterPending,
   });
 
   const hasActiveFilters = (filters: FilterState) => {
@@ -77,24 +70,18 @@ export default function SearchPage() {
 
   const handleSearch = useCallback((query: string) => {
     setFilters(prev => ({ ...prev, searchQuery: query }));
+    setCurrentPage(1);
   }, []);
 
   const handleFilterChange = useCallback((newFilters: Partial<FilterState>) => {
     setFilters(prev => ({ ...prev, ...newFilters }));
+    setCurrentPage(1);
   }, []);
 
-  useEffect(() => {
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-    
-    if (hasActiveFilters(filters)) {
-      mutateFilters(filters);
-    } else {
-      queryClient.invalidateQueries({ queryKey: ["auction-items", "filtered"] });
-    }
-  }, [filters, mutateFilters, queryClient]);
+  const handleSortChange = (value: string) => {
+    setSortBy(value);
+    setCurrentPage(1);
+  };
 
   const handleClearFilters = () => {
     const clearedFilters: FilterState = {
@@ -105,38 +92,13 @@ export default function SearchPage() {
     };
     setFilters(clearedFilters);
     setCurrentPage(1);
-    queryClient.invalidateQueries({ queryKey: ["auction-items", "filtered"] });
   };
 
-  // Sort items
-  const sortedItems = [...items].sort((a, b) => {
-    switch (sortBy) {
-      case "priceAsc":
-        return parseFloat(a.currentPrice) - parseFloat(b.currentPrice);
-      case "priceDesc":
-        return parseFloat(b.currentPrice) - parseFloat(a.currentPrice);
-      case "msrpDiscount":
-        const aDiscount = (parseFloat(a.msrp) - parseFloat(a.currentPrice)) / parseFloat(a.msrp);
-        const bDiscount = (parseFloat(b.msrp) - parseFloat(b.currentPrice)) / parseFloat(b.msrp);
-        return bDiscount - aDiscount;
-      case "condition":
-        return a.condition.localeCompare(b.condition);
-      case "endDate":
-      default:
-        return new Date(a.endDate).getTime() - new Date(b.endDate).getTime();
-    }
-  });
-
-  // Pagination
-  const totalPages = Math.ceil(sortedItems.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const paginatedItems = sortedItems.slice(startIndex, endIndex);
-
-  // Reset to page 1 when filters change
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [filters, sortBy]);
+  const items = paginatedData?.items || [];
+  const totalPages = paginatedData?.totalPages || 1;
+  const total = paginatedData?.total || 0;
+  const startIndex = (currentPage - 1) * itemsPerPage + 1;
+  const endIndex = Math.min(currentPage * itemsPerPage, total);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -162,12 +124,12 @@ export default function SearchPage() {
                   <div>
                     <h2 className="text-lg font-semibold text-foreground">Search Results</h2>
                     <p className="text-sm text-muted-foreground mt-1">
-                      Showing <span data-testid="item-count">{startIndex + 1}-{Math.min(endIndex, sortedItems.length)}</span> of <span data-testid="total-items">{sortedItems.length}</span> items
+                      Showing <span data-testid="item-count">{startIndex}-{endIndex}</span> of <span data-testid="total-items">{total}</span> items
                     </p>
                   </div>
                   <div className="flex items-center space-x-2">
                     <label className="text-sm text-muted-foreground">Sort by:</label>
-                    <Select value={sortBy} onValueChange={setSortBy} data-testid="sort-select">
+                    <Select value={sortBy} onValueChange={handleSortChange} data-testid="sort-select">
                       <SelectTrigger className="w-48">
                         <SelectValue />
                       </SelectTrigger>
@@ -184,11 +146,11 @@ export default function SearchPage() {
               </CardContent>
             </Card>
 
-            {isLoading || isFilterPending ? (
+            {isLoading ? (
               <div className="text-center py-8" data-testid="loading-state">
                 <p className="text-muted-foreground">Loading auction items...</p>
               </div>
-            ) : sortedItems.length === 0 ? (
+            ) : items.length === 0 ? (
               <Card data-testid="no-results">
                 <CardContent className="p-8 text-center">
                   <p className="text-muted-foreground">No auction items found matching your criteria.</p>
@@ -206,12 +168,12 @@ export default function SearchPage() {
               <>
                 {/* Desktop Table View */}
                 <div className="hidden lg:block">
-                  <ItemsTable items={paginatedItems} />
+                  <ItemsTable items={items} />
                 </div>
 
                 {/* Mobile Card View */}
                 <div className="block lg:hidden">
-                  <ItemCards items={paginatedItems} />
+                  <ItemCards items={items} />
                 </div>
 
                 {/* Pagination Controls */}

@@ -2,6 +2,14 @@ import { type AuctionItem, type InsertAuctionItem, type Location, type InsertLoc
 import { randomUUID } from "crypto";
 import { scraper } from "./scraper";
 
+export interface PaginatedResult<T> {
+  items: T[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 export interface IStorage {
   // Auction Items
   getAuctionItems(): Promise<AuctionItem[]>;
@@ -14,7 +22,11 @@ export interface IStorage {
     facilities?: string[];
     minPrice?: number;
     maxPrice?: number;
-  }): Promise<AuctionItem[]>;
+    searchQuery?: string;
+    sortBy?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<PaginatedResult<AuctionItem>>;
   refreshAuctionData(): Promise<void>;
   
   // Locations
@@ -268,7 +280,11 @@ export class MemStorage implements IStorage {
     facilities?: string[];
     minPrice?: number;
     maxPrice?: number;
-  }): Promise<AuctionItem[]> {
+    searchQuery?: string;
+    sortBy?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<PaginatedResult<AuctionItem>> {
     let items = Array.from(this.auctionItems.values());
 
     if (filters.conditions && filters.conditions.length > 0) {
@@ -291,7 +307,50 @@ export class MemStorage implements IStorage {
       items = items.filter(item => parseFloat(item.currentPrice) <= filters.maxPrice!);
     }
 
-    return items;
+    // Apply search query filter BEFORE pagination
+    if (filters.searchQuery && filters.searchQuery.trim()) {
+      const searchTerm = filters.searchQuery.toLowerCase();
+      items = items.filter(item => 
+        item.title.toLowerCase().includes(searchTerm) ||
+        item.description.toLowerCase().includes(searchTerm)
+      );
+    }
+
+    // Apply sorting BEFORE pagination
+    const sortBy = filters.sortBy || "endDate";
+    items.sort((a, b) => {
+      switch (sortBy) {
+        case "priceAsc":
+          return parseFloat(a.currentPrice) - parseFloat(b.currentPrice);
+        case "priceDesc":
+          return parseFloat(b.currentPrice) - parseFloat(a.currentPrice);
+        case "msrpDiscount":
+          const aDiscount = (parseFloat(a.msrp) - parseFloat(a.currentPrice)) / parseFloat(a.msrp);
+          const bDiscount = (parseFloat(b.msrp) - parseFloat(b.currentPrice)) / parseFloat(b.msrp);
+          return bDiscount - aDiscount;
+        case "condition":
+          return a.condition.localeCompare(b.condition);
+        case "endDate":
+        default:
+          return new Date(a.endDate).getTime() - new Date(b.endDate).getTime();
+      }
+    });
+
+    const total = items.length;
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
+    const totalPages = Math.ceil(total / limit);
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + limit;
+    const paginatedItems = items.slice(startIndex, endIndex);
+
+    return {
+      items: paginatedItems,
+      total,
+      page,
+      limit,
+      totalPages
+    };
   }
 
   async getLocations(): Promise<Location[]> {
