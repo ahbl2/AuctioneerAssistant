@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import Header from "@/components/header";
 import Footer from "@/components/footer";
 import SearchBar from "@/components/search-bar";
@@ -29,6 +29,7 @@ export default function SearchPage() {
     searchQuery: "",
   });
   const [sortBy, setSortBy] = useState("endDate");
+  const isInitialMount = useRef(true);
 
   const queryClient = useQueryClient();
 
@@ -47,6 +48,8 @@ export default function SearchPage() {
       queryClient.setQueryData(["auction-items", "filtered"], data);
     },
   });
+  
+  const { mutate: mutateFilters, isPending: isFilterPending } = filterMutation;
 
   // Get filtered items or all items
   const { data: items = [], isLoading } = useQuery<AuctionItem[]>({
@@ -58,7 +61,7 @@ export default function SearchPage() {
       const response = await fetch("/api/auction-items");
       return response.json();
     },
-    enabled: !filterMutation.isPending,
+    enabled: !isFilterPending,
   });
 
   const hasActiveFilters = (filters: FilterState) => {
@@ -71,20 +74,25 @@ export default function SearchPage() {
   };
 
   const handleSearch = useCallback((query: string) => {
-    setFilters(prev => {
-      const newFilters = { ...prev, searchQuery: query };
-      filterMutation.mutate(newFilters);
-      return newFilters;
-    });
-  }, [filterMutation]);
+    setFilters(prev => ({ ...prev, searchQuery: query }));
+  }, []);
 
   const handleFilterChange = useCallback((newFilters: Partial<FilterState>) => {
-    setFilters(prev => {
-      const updatedFilters = { ...prev, ...newFilters };
-      filterMutation.mutate(updatedFilters);
-      return updatedFilters;
-    });
-  }, [filterMutation]);
+    setFilters(prev => ({ ...prev, ...newFilters }));
+  }, []);
+
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    
+    if (hasActiveFilters(filters)) {
+      mutateFilters(filters);
+    } else {
+      queryClient.invalidateQueries({ queryKey: ["auction-items", "filtered"] });
+    }
+  }, [filters, mutateFilters, queryClient]);
 
   const handleClearFilters = () => {
     const clearedFilters: FilterState = {
@@ -162,7 +170,7 @@ export default function SearchPage() {
               </CardContent>
             </Card>
 
-            {isLoading || filterMutation.isPending ? (
+            {isLoading || isFilterPending ? (
               <div className="text-center py-8" data-testid="loading-state">
                 <p className="text-muted-foreground">Loading auction items...</p>
               </div>
