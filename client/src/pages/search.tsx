@@ -24,8 +24,8 @@ interface FilterState {
 export default function SearchPage() {
   const [filters, setFilters] = useState<FilterState>({
     conditions: [],
-    states: ["Kentucky"],
-    facilities: ["Louisville - Intermodal Dr. - Louisville, KY"],
+    states: [],
+    facilities: [],
     searchQuery: "",
   });
   const [sortBy, setSortBy] = useState("endDate");
@@ -99,8 +99,8 @@ export default function SearchPage() {
   const handleClearFilters = () => {
     const clearedFilters: FilterState = {
       conditions: [],
-      states: ["Kentucky"],
-      facilities: ["Louisville - Intermodal Dr. - Louisville, KY"],
+      states: [],
+      facilities: [],
       searchQuery: "",
     };
     setFilters(clearedFilters);
