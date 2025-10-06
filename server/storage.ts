@@ -26,13 +26,14 @@ export interface IStorage {
 export class MemStorage implements IStorage {
   private auctionItems: Map<string, AuctionItem>;
   private locations: Map<string, Location>;
-  private initializationPromise: Promise<void>;
+  private isScrapingComplete = false;
 
   constructor() {
     this.auctionItems = new Map();
     this.locations = new Map();
     this.seedLocations();
-    this.initializationPromise = this.initializeWithScrapedData();
+    this.seedFallbackData();
+    this.initializeWithScrapedData();
   }
 
   private async initializeWithScrapedData(): Promise<void> {
@@ -47,18 +48,16 @@ export class MemStorage implements IStorage {
           const id = randomUUID();
           this.auctionItems.set(id, { ...item, id });
         });
+        this.isScrapingComplete = true;
       } else {
-        console.log('No items scraped, using fallback seed data');
-        this.seedFallbackData();
+        console.log('No items scraped, keeping fallback seed data');
       }
     } catch (error) {
-      console.error('Error loading scraped data, using fallback:', error);
-      this.seedFallbackData();
+      console.error('Error loading scraped data, keeping fallback:', error);
     }
   }
 
   async refreshAuctionData(): Promise<void> {
-    await this.initializationPromise;
     try {
       console.log('Refreshing auction data from bidft.auction...');
       const scrapedData = await scraper.getAuctionData(true);
@@ -237,17 +236,14 @@ export class MemStorage implements IStorage {
   }
 
   async getAuctionItems(): Promise<AuctionItem[]> {
-    await this.initializationPromise;
     return Array.from(this.auctionItems.values());
   }
 
   async getAuctionItem(id: string): Promise<AuctionItem | undefined> {
-    await this.initializationPromise;
     return this.auctionItems.get(id);
   }
 
   async createAuctionItem(insertItem: InsertAuctionItem): Promise<AuctionItem> {
-    await this.initializationPromise;
     const id = randomUUID();
     const item: AuctionItem = { ...insertItem, id };
     this.auctionItems.set(id, item);
@@ -255,7 +251,6 @@ export class MemStorage implements IStorage {
   }
 
   async searchAuctionItems(query: string): Promise<AuctionItem[]> {
-    await this.initializationPromise;
     if (!query.trim()) return this.getAuctionItems();
     
     const items = Array.from(this.auctionItems.values());
@@ -274,7 +269,6 @@ export class MemStorage implements IStorage {
     minPrice?: number;
     maxPrice?: number;
   }): Promise<AuctionItem[]> {
-    await this.initializationPromise;
     let items = Array.from(this.auctionItems.values());
 
     if (filters.conditions && filters.conditions.length > 0) {
@@ -309,7 +303,6 @@ export class MemStorage implements IStorage {
   }
 
   async createLocation(insertLocation: InsertLocation): Promise<Location> {
-    await this.initializationPromise;
     const id = randomUUID();
     const location: Location = { ...insertLocation, id };
     this.locations.set(id, location);
