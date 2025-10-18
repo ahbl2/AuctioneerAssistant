@@ -228,6 +228,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Clear database and restart indexing
+  app.post("/api/indexer/clear", async (req, res) => {
+    try {
+      const { bidftaLocationIndexer } = await import("./bidftaLocationIndexer");
+      bidftaLocationIndexer.clearDatabase();
+      console.log("[API] Database cleared, restarting indexer...");
+      await bidftaLocationIndexer.start();
+      res.json({ message: "Database cleared and indexer restarted successfully" });
+    } catch (error) {
+      console.log("[API] Failed to clear database:", error);
+      res.status(500).json({ message: "Failed to clear database" });
+    }
+  });
+
   // Get all ended auction items
   app.get("/api/ended-auctions", async (req, res) => {
     try {

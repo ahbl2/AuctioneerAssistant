@@ -2,6 +2,7 @@ import { bidftaLocationIndexer } from "./bidftaLocationIndexer";
 import { BidftaDirectItem } from "./bidftaMultiPageApi";
 import { nanoid } from "nanoid";
 import { calculateTimeLeft } from "./utils";
+import { updateItemsWithRealCurrentBids } from "./bidftaCurrentBidApi";
 
 // Fallback data for when indexer is not ready
 function getFallbackData(query: string, locations?: string[]): BidftaDirectItem[] {
@@ -162,7 +163,10 @@ export async function searchBidftaLocation(query: string, locations?: string[]):
     return getFallbackData(query, locations);
   }
 
-  return items;
+  // Update ALL items with real current bid data from BidFTA HTML scraping
+  const updatedItems = await updateItemsWithRealCurrentBids(items);
+  
+  return updatedItems;
 }
 
 export async function getAllBidftaLocationItems(locations?: string[]): Promise<BidftaDirectItem[]> {
