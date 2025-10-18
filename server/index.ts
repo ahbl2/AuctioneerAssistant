@@ -1,6 +1,8 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { crawler } from "./crawler";
+import { bidftaLocationIndexer } from "./bidftaLocationIndexer";
 
 const app = express();
 
@@ -74,8 +76,23 @@ app.use((req, res, next) => {
   server.listen({
     port,
     host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
+  }, async () => {
     log(`serving on port ${port}`);
+    
+    // Start the location indexer service
+    try {
+      await bidftaLocationIndexer.start();
+      log('BidFTA Location Indexer service started');
+    } catch (error) {
+      log('Failed to start location indexer service:', String(error));
+    }
+
+    // Start the crawler service
+    try {
+      await crawler.start();
+      log('Crawler service started');
+    } catch (error) {
+      log('Failed to start crawler service:', String(error));
+    }
   });
 })();

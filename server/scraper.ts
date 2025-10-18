@@ -1,6 +1,5 @@
 import puppeteer from 'puppeteer';
 import type { InsertAuctionItem } from '@shared/schema';
-import { execSync } from 'child_process';
 
 export interface ScrapedAuctionData {
   items: InsertAuctionItem[];
@@ -45,16 +44,9 @@ export class BidFTScraper {
   }
 
   private async scrapeAuctions(): Promise<InsertAuctionItem[]> {
-    let chromiumPath = '';
-    try {
-      chromiumPath = execSync('which chromium || which chromium-browser', { encoding: 'utf8' }).trim();
-    } catch {
-      chromiumPath = '/nix/store/zi4f80l169xlmivz8vja8wlphq74qqk0-chromium-125.0.6422.141/bin/chromium';
-    }
-
-    const browser = await puppeteer.launch({
+    // Prefer Puppeteer's bundled Chromium. Allow override via PUPPETEER_EXECUTABLE_PATH.
+    const launchOptions: Parameters<typeof puppeteer.launch>[0] = {
       headless: true,
-      executablePath: chromiumPath,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -62,9 +54,15 @@ export class BidFTScraper {
         '--disable-accelerated-2d-canvas',
         '--disable-gpu'
       ]
-    });
+    };
 
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
+    let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
     try {
+      browser = await puppeteer.launch(launchOptions);
       const page = await browser.newPage();
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
       
@@ -108,8 +106,34 @@ export class BidFTScraper {
                 const imageUrl = imgEls[0].src || '';
                 if (!imageUrl || imageUrl.includes('placeholder')) return;
                 
-                const titleEl = container.querySelector('strong, h1, h2, h3, h4, h5, h6, [class*="title"]');
+                // Look for actual item title, not promotional text
+                const titleEl = container.querySelector('strong, h1, h2, h3, h4, h5, h6, [class*="title"], [class*="item"], [class*="name"]');
                 let title = titleEl?.textContent?.trim() || '';
+                
+                // Skip promotional text patterns
+                const promoPatterns = [
+                  /coming in hot/i,
+                  /deals deals deals/i,
+                  /bid! win! save/i,
+                  /morning deals/i,
+                  /afternoon deals/i,
+                  /huge savings/i,
+                  /mid-day rush/i,
+                  /catch you outside/i,
+                  /hitting you with/i
+                ];
+                
+                if (promoPatterns.some(pattern => pattern.test(title))) {
+                  // Try to find actual item title in other elements
+                  const itemTitleEl = container.querySelector('[class*="item-title"], [class*="product-title"], [class*="auction-title"]');
+                  if (itemTitleEl) {
+                    title = itemTitleEl.textContent?.trim() || '';
+                  } else {
+                    // Skip this item if we can't find a real title
+                    return;
+                  }
+                }
+                
                 if (!title || title.length < 5) return;
                 
                 const textContent = container.textContent || '';
@@ -138,18 +162,52 @@ export class BidFTScraper {
                 const itemCountMatch = textContent.match(/(\d+)\s+Items?/);
                 const itemCount = itemCountMatch ? parseInt(itemCountMatch[1]) : 0;
                 
-                const endDateMatch = textContent.match(/(October|November|December|January|February|March|April|May|June|July|August|September)\s+(\d+)[a-z]*(\d{2}:\d{2}\s*[AP]M)/);
+                // Look for various date patterns
+                const datePatterns = [
+                  /(\d+)\s+DAYS?\s+(\d{2}):(\d{2}):(\d{2})/i,
+                  /(October|November|December|January|February|March|April|May|June|July|August|September)\s+(\d+)[a-z]*(\d{2}:\d{2}\s*[AP]M)/i,
+                  /(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*([AP]M)/i
+                ];
+                
                 let endDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
                 
-                if (endDateMatch) {
-                  const monthStr = endDateMatch[1];
-                  const day = parseInt(endDateMatch[2]);
-                  const time = endDateMatch[3];
-                  const year = new Date().getFullYear();
-                  const dateStr = `${monthStr} ${day}, ${year} ${time}`;
-                  const parsedDate = new Date(dateStr);
-                  if (!isNaN(parsedDate.getTime())) {
-                    endDate = parsedDate;
+                for (const pattern of datePatterns) {
+                  const match = textContent.match(pattern);
+                  if (match) {
+                    try {
+                      if (pattern === datePatterns[0]) {
+                        // Days:Hours:Minutes format
+                        const days = parseInt(match[1]);
+                        const hours = parseInt(match[2]);
+                        const minutes = parseInt(match[3]);
+                        const seconds = parseInt(match[4]);
+                        endDate = new Date(Date.now() + (days * 24 + hours) * 60 * 60 * 1000 + minutes * 60 * 1000 + seconds * 1000);
+                      } else if (pattern === datePatterns[1]) {
+                        // Month Day, Year Time format
+                        const monthStr = match[1];
+                        const day = parseInt(match[2]);
+                        const time = match[3];
+                        const year = new Date().getFullYear();
+                        const dateStr = `${monthStr} ${day}, ${year} ${time}`;
+                        endDate = new Date(dateStr);
+                      } else if (pattern === datePatterns[2]) {
+                        // MM/DD/YYYY HH:MM AM/PM format
+                        const month = parseInt(match[1]);
+                        const day = parseInt(match[2]);
+                        const year = parseInt(match[3]);
+                        const hour = parseInt(match[4]);
+                        const minute = parseInt(match[5]);
+                        const ampm = match[6];
+                        const hour24 = ampm.toUpperCase() === 'PM' && hour !== 12 ? hour + 12 : (ampm.toUpperCase() === 'AM' && hour === 12 ? 0 : hour);
+                        endDate = new Date(year, month - 1, day, hour24, minute);
+                      }
+                      
+                      if (!isNaN(endDate.getTime())) {
+                        break;
+                      }
+                    } catch (e) {
+                      // Continue to next pattern
+                    }
                   }
                 }
                 
@@ -222,7 +280,9 @@ export class BidFTScraper {
       console.error('Error scraping bidfta.com:', error);
       return [];
     } finally {
-      await browser.close();
+      try {
+        await browser?.close();
+      } catch {}
     }
   }
 }

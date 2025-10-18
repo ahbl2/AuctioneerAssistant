@@ -49,42 +49,14 @@ export class MemStorage implements IStorage {
   }
 
   private async initializeWithScrapedData(): Promise<void> {
-    try {
-      console.log('Fetching live auction data from bidfta.com...');
-      const scrapedData = await scraper.getAuctionData();
-      
-      if (scrapedData.items.length > 0) {
-        console.log(`Successfully loaded ${scrapedData.items.length} items from bidfta.com`);
-        this.auctionItems.clear();
-        scrapedData.items.forEach(item => {
-          const id = randomUUID();
-          this.auctionItems.set(id, { ...item, id });
-        });
-        this.isScrapingComplete = true;
-      } else {
-        console.log('No items scraped, keeping fallback seed data');
-      }
-    } catch (error) {
-      console.error('Error loading scraped data, keeping fallback:', error);
-    }
+    // Skip scraping - use API proxy instead
+    console.log('Skipping Puppeteer scraping - using API proxy for live data');
+    this.isScrapingComplete = true;
   }
 
   async refreshAuctionData(): Promise<void> {
-    try {
-      console.log('Refreshing auction data from bidfta.com...');
-      const scrapedData = await scraper.getAuctionData(true);
-      
-      if (scrapedData.items.length > 0) {
-        this.auctionItems.clear();
-        scrapedData.items.forEach(item => {
-          const id = randomUUID();
-          this.auctionItems.set(id, { ...item, id });
-        });
-        console.log(`Refreshed ${scrapedData.items.length} auction items`);
-      }
-    } catch (error) {
-      console.error('Error refreshing auction data:', error);
-    }
+    // Skip scraping - use API proxy instead
+    console.log('Skipping Puppeteer refresh - using API proxy for live data');
   }
 
   private seedLocations() {
