@@ -103,8 +103,25 @@ export default function ModernSearch() {
       const response = await fetch(`/api/search?${params}`);
       const data = await response.json();
       
+      // Handle the new API response format with items and pagination
+      const items = data.items || data; // Support both old array format and new object format
+      
+      // Map API response to frontend format
+      const mappedItems = items.map((item: any) => ({
+        id: item.item_id,
+        title: item.title,
+        description: item.description,
+        imageUrl: item.image_url,
+        currentPrice: item.current_bid,
+        msrp: item.msrp,
+        location: item.location_name,
+        endDate: item.end_date,
+        condition: item.condition,
+        auctionUrl: item.source_url
+      }));
+
       // Deduplicate items by id and location
-      const uniqueItems = data.reduce((acc: AuctionItem[], item: AuctionItem) => {
+      const uniqueItems = mappedItems.reduce((acc: AuctionItem[], item: AuctionItem) => {
         const key = `${item.id}-${item.location}`;
         if (!acc.find(existing => `${existing.id}-${existing.location}` === key)) {
           acc.push(item);
