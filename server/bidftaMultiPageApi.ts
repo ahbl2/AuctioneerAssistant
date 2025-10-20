@@ -167,7 +167,7 @@ function parseItemsFromHTML(html: string): any[] {
     // Pattern 4: Look for any JSON-like data in script tags
     if (items.length === 0) {
       console.log(`[BidFTA MultiPage] Trying pattern 4: any JSON-like data`);
-      const scriptRegex = /<script[^>]*>(.*?)<\/script>/gs;
+      const scriptRegex = /<script[^>]*>(.*?)<\/script>/g;
       let scriptMatch;
       while ((scriptMatch = scriptRegex.exec(html)) !== null) {
         const scriptContent = scriptMatch[1];
@@ -248,7 +248,7 @@ function parseItemsFromHTML(html: string): any[] {
                       city: null,
                       state: null,
                       locationName: null,
-                      locationId: locationId || null
+                      locationId: getLocationId(raw.auctionLocation || raw.location || raw.facility || raw.locationName) || null
                     });
                   }
                 }

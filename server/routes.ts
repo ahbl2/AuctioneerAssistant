@@ -2,6 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { searchBidftaLocation, getAllBidftaLocationItems, getLocationIndexerStats } from "./bidftaLocationApi";
+import { sqliteStorage } from "./sqliteStorage";
+import { backgroundIndexer } from "./backgroundIndexer";
 import { endedAuctionsStorage } from "./endedAuctionsStorage";
 import { z } from "zod";
 import { crawler } from "./crawler";
@@ -342,71 +344,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const status = (req.query.status as string | undefined) || "unknown";
     const minBid = Number(req.query.minBid ?? NaN);
     const maxBid = Number(req.query.maxBid ?? NaN);
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = Math.min(parseInt(req.query.limit as string) || 100, 500); // Max 500 items per page
 
     try {
-      // Use multi-page API for fresh data with real current bids
-      const { searchBidftaMultiPage } = await import("./bidftaMultiPageApi");
-      
-      // Map location names to IDs
-      const locationIdMap: { [key: string]: string } = {
-        "Cincinnati — Broadwell Road": "23",
-        "Cincinnati — Colerain Avenue": "22", 
-        "Cincinnati — School Road": "21",
-        "Cincinnati — Waycross Road": "31",
-        "Cincinnati — West Seymour Avenue": "34",
-        "Elizabethtown — Peterson Drive": "24",
-        "Erlanger — Kenton Lane Road 100": "25",
-        "Florence — Industrial Road": "26",
-        "Franklin — Washington Way": "27",
-        "Georgetown — Triport Road": "28",
-        "Louisville — Intermodal Drive": "29",
-        "Sparta — Johnson Road": "30",
-      };
+      // Use SQLite storage for instant results (no network fetching)
+      const result = sqliteStorage.searchItems({
+        query: q || "",
+        location: location || undefined,
+        minBid: !Number.isNaN(minBid) ? minBid : undefined,
+        maxBid: !Number.isNaN(maxBid) ? maxBid : undefined,
+        page,
+        limit
+      });
 
-      let locationIds: string[] = [];
-      if (location) {
-        const mappedId = locationIdMap[location];
-        if (mappedId) {
-          locationIds = [mappedId];
-        }
-      } else {
-        // Use all target locations if no specific location
-        locationIds = Object.values(locationIdMap);
-      }
-
-      // Use multi-page API for comprehensive results with pagination
-      const page = parseInt(req.query.page as string) || 1;
-      const limit = Math.min(parseInt(req.query.limit as string) || 100, 500); // Max 500 items per page
-      const offset = (page - 1) * limit;
-      
-      const items = await searchBidftaMultiPage(q || "", locationIds, 50); // Fetch up to 50 pages for all results
-      
-      // Apply additional filters
-      let filteredItems = items;
-      
+      // Apply status filtering (since SQLite doesn't handle complex date logic)
+      let filteredItems = result.items;
       if (status && status !== "unknown") {
         filteredItems = filteredItems.filter(item => {
           if (status === "active") {
-            return item.endDate ? item.endDate > new Date() : true;
+            return item.end_date ? new Date(item.end_date) > new Date() : true;
           } else if (status === "ended") {
-            return item.endDate ? item.endDate <= new Date() : false;
+            return item.end_date ? new Date(item.end_date) <= new Date() : false;
           }
           return true;
         });
       }
 
-      // Apply pagination to prevent memory issues
-      const totalItems = filteredItems.length;
-      const paginatedItems = filteredItems.slice(offset, offset + limit);
-      const totalPages = Math.ceil(totalItems / limit);
+      const totalPages = Math.ceil(result.total / limit);
       
       // Return paginated results
       res.json({
-        items: paginatedItems,
+        items: filteredItems,
         pagination: {
           page,
           limit,
-          totalItems,
+          totalItems: result.total,
           totalPages,
           hasNextPage: page < totalPages,
           hasPrevPage: page > 1
@@ -463,6 +436,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const { locationId } = req.params;
     const auctions = auctionDiscovery.getAuctionsForLocation(locationId);
     res.json(auctions);
+  });
+
+  // ===== BACKGROUND INDEXER API ROUTES =====
+
+  // Get background indexer status
+  app.get("/api/indexer/status", (req, res) => {
+    try {
+      const stats = backgroundIndexer.getStats();
+      res.json(stats);
+    } catch (error) {
+      console.error("Indexer status error:", error);
+      res.status(500).json({ error: "Failed to get indexer status" });
+    }
+  });
+
+  // Force background indexer to run
+  app.post("/api/indexer/force", async (req, res) => {
+    try {
+      await backgroundIndexer.forceIndex();
+      res.json({ message: "Background indexing started" });
+    } catch (error) {
+      console.error("Force index error:", error);
+      res.status(500).json({ error: "Failed to start indexing" });
+    }
+  });
+
+  // Get database statistics
+  app.get("/api/indexer/stats", (req, res) => {
+    try {
+      const stats = sqliteStorage.getStats();
+      res.json(stats);
+    } catch (error) {
+      console.error("Database stats error:", error);
+      res.status(500).json({ error: "Failed to get database stats" });
+    }
+  });
+
+  // Clean up old records
+  app.post("/api/indexer/cleanup", (req, res) => {
+    try {
+      const daysOld = parseInt(req.query.days as string) || 30;
+      sqliteStorage.cleanup(daysOld);
+      res.json({ message: `Cleaned up records older than ${daysOld} days` });
+    } catch (error) {
+      console.error("Cleanup error:", error);
+      res.status(500).json({ error: "Failed to cleanup old records" });
+    }
   });
 
   const httpServer = createServer(app);

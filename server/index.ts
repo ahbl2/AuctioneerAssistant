@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { crawler } from "./crawler";
 import { auctionPolling } from "./auctionPolling";
+import { backgroundIndexer } from "./backgroundIndexer";
 
 const app = express();
 
@@ -85,6 +86,14 @@ app.use((req, res, next) => {
       log('Auction Polling service started');
     } catch (error) {
       log('Failed to start auction polling service:', String(error));
+    }
+
+    // Start background indexer for fast searches
+    try {
+      backgroundIndexer.start();
+      log('Background Indexer service started');
+    } catch (error) {
+      log('Failed to start background indexer service:', String(error));
     }
 
     // Start the crawler service
