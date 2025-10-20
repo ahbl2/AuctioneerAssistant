@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BidFTA Search</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .search-box { display: flex; gap: 10px; margin-bottom: 20px; }
+        .search-box input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        .search-box button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .filters { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .filters select, .filters input { padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        .results { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+        .item-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; background: white; }
+        .item-card h3 { margin: 0 0 10px 0; color: #333; font-size: 16px; }
+        .item-card .price { font-size: 18px; font-weight: bold; color: #28a745; margin: 10px 0; }
+        .item-card .location { color: #666; font-size: 14px; margin: 5px 0; }
+        .item-card .msrp { color: #999; font-size: 14px; text-decoration: line-through; }
+        .item-card a { color: #007bff; text-decoration: none; }
+        .loading { text-align: center; padding: 20px; color: #666; }
+        .error { color: #dc3545; padding: 10px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 BidFTA Auction Search</h1>
+        
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Search for items (e.g., chair, furniture, electronics...)" value="">
+            <button onclick="searchItems()">Search</button>
+        </div>
+        
+        <div class="filters">
+            <select id="locationFilter">
+                <option value="">All Locations</option>
+                <option value="Cincinnati — Broadwell Road">Cincinnati — Broadwell Road</option>
+                <option value="Cincinnati — Colerain Avenue">Cincinnati — Colerain Avenue</option>
+                <option value="Cincinnati — School Road">Cincinnati — School Road</option>
+                <option value="Cincinnati — Waycross Road">Cincinnati — Waycross Road</option>
+                <option value="Cincinnati — West Seymour Avenue">Cincinnati — West Seymour Avenue</option>
+                <option value="Elizabethtown — Peterson Drive">Elizabethtown — Peterson Drive</option>
+                <option value="Erlanger — Kenton Lane Road 100">Erlanger — Kenton Lane Road 100</option>
+                <option value="Florence — Industrial Road">Florence — Industrial Road</option>
+                <option value="Franklin — Washington Way">Franklin — Washington Way</option>
+                <option value="Georgetown — Triport Road">Georgetown — Triport Road</option>
+                <option value="Louisville — Intermodal Drive">Louisville — Intermodal Drive</option>
+                <option value="Sparta — Johnson Road">Sparta — Johnson Road</option>
+            </select>
+            
+            <input type="number" id="minBid" placeholder="Min Bid" step="0.01">
+            <input type="number" id="maxBid" placeholder="Max Bid" step="0.01">
+            
+            <select id="statusFilter">
+                <option value="unknown">All Items</option>
+                <option value="active">Active Only</option>
+                <option value="ended">Ended Only</option>
+            </select>
+        </div>
+        
+        <div id="results"></div>
+    </div>
+
+    <script>
+        let currentResults = [];
+        
+        async function searchItems() {
+            const query = document.getElementById('searchInput').value;
+            const location = document.getElementById('locationFilter').value;
+            const minBid = document.getElementById('minBid').value;
+            const maxBid = document.getElementById('maxBid').value;
+            const status = document.getElementById('statusFilter').value;
+            
+            const params = new URLSearchParams();
+            if (query) params.append('q', query);
+            if (location) params.append('location', location);
+            if (minBid) params.append('minBid', minBid);
+            if (maxBid) params.append('maxBid', maxBid);
+            if (status) params.append('status', status);
+            
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<div class="loading">Searching...</div>';
+            
+            try {
+                const response = await fetch(`http://localhost:3000/search?${params}`);
+                const data = await response.json();
+                currentResults = data;
+                displayResults(data);
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+        
+        function displayResults(items) {
+            const resultsDiv = document.getElementById('results');
+            
+            if (items.length === 0) {
+                resultsDiv.innerHTML = '<div class="loading">No items found. Try a different search term.</div>';
+                return;
+            }
+            
+            resultsDiv.innerHTML = `
+                <div style="margin-bottom: 20px; color: #666;">
+                    Found ${items.length} items
+                </div>
+                <div class="results">
+                    ${items.map(item => `
+                        <div class="item-card">
+                            <h3>${item.title || 'No Title'}</h3>
+                            <div class="location">📍 ${item.location_name}</div>
+                            <div class="price">Current Bid: $${item.current_bid || '0.00'}</div>
+                            ${item.msrp ? `<div class="msrp">MSRP: $${item.msrp}</div>` : ''}
+                            <div style="margin-top: 10px;">
+                                <a href="${item.source_url}" target="_blank">View on BidFTA →</a>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+        
+        // Load initial results
+        searchItems();
+        
+        // Search on Enter key
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchItems();
+            }
+        });
+    </script>
+</body>
+</html>

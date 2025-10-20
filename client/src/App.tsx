@@ -18,7 +18,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={ModernSearch} />
-      <Route path="/search" component={SearchPage} />
+      <Route path="/search" component={ModernSearch} />
       <Route path="/modern" component={ModernSearch} />
       <Route path="/crawler" component={ModernCrawler} />
       <Route path="/crawler-classic" component={CrawlerPage} />

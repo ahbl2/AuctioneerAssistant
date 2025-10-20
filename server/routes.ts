@@ -7,6 +7,11 @@ import { z } from "zod";
 import { crawler } from "./crawler";
 import type { InsertCrawlerRule, CrawlerRule } from "@shared/schema";
 import { randomUUID } from "crypto";
+import cors from "cors";
+import { db } from "../src/db/client";
+import { CANONICAL_LOCATIONS } from "../src/utils/locations";
+import { auctionPolling } from "./auctionPolling";
+import { auctionDiscovery } from "./auctionDiscovery";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
@@ -289,6 +294,166 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("[API] Failed to clear ended auctions:", error);
       res.status(500).json({ message: "Failed to clear ended auctions" });
     }
+  });
+
+  // ===== NEW SQLITE API ROUTES =====
+  
+  // Enable CORS for all routes
+  app.use(cors({
+    origin: ['http://localhost:5000', 'http://localhost:3000'],
+    credentials: true
+  }));
+
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", time: new Date().toISOString() });
+  });
+
+  // Get canonical locations
+  app.get("/api/locations", (req, res) => {
+    res.json(CANONICAL_LOCATIONS);
+  });
+
+  // Get specific item by ID
+  app.get("/api/items/:item_id", (req, res) => {
+    const { item_id } = req.params;
+    const location = String(req.query.location || "");
+    const row = db
+      .prepare(
+        `SELECT * FROM items WHERE item_id = ? AND location_name = ? LIMIT 1`
+      )
+      .get(item_id, location);
+    if (!row) return res.status(404).json({ error: "not_found" });
+
+    // compute effective_time_left if end_date exists
+    if (row.end_date && row.status !== "ended") {
+      const now = Date.now();
+      const end = Date.parse(row.end_date);
+      const left = Math.max(0, Math.floor((end - now) / 1000));
+      row.effective_time_left = left;
+    }
+    res.json(row);
+  });
+
+  // Search items with fresh data from BidFTA API
+  app.get("/api/search", async (req, res) => {
+    const q = (req.query.q as string | undefined)?.trim();
+    const location = (req.query.location as string | undefined)?.trim();
+    const status = (req.query.status as string | undefined) || "unknown";
+    const minBid = Number(req.query.minBid ?? NaN);
+    const maxBid = Number(req.query.maxBid ?? NaN);
+
+    try {
+      // Use multi-page API for fresh data with real current bids
+      const { searchBidftaMultiPage } = await import("./bidftaMultiPageApi");
+      
+      // Map location names to IDs
+      const locationIdMap: { [key: string]: string } = {
+        "Cincinnati — Broadwell Road": "23",
+        "Cincinnati — Colerain Avenue": "22", 
+        "Cincinnati — School Road": "21",
+        "Cincinnati — Waycross Road": "31",
+        "Cincinnati — West Seymour Avenue": "34",
+        "Elizabethtown — Peterson Drive": "24",
+        "Erlanger — Kenton Lane Road 100": "25",
+        "Florence — Industrial Road": "26",
+        "Franklin — Washington Way": "27",
+        "Georgetown — Triport Road": "28",
+        "Louisville — Intermodal Drive": "29",
+        "Sparta — Johnson Road": "30",
+      };
+
+      let locationIds: string[] = [];
+      if (location) {
+        const mappedId = locationIdMap[location];
+        if (mappedId) {
+          locationIds = [mappedId];
+        }
+      } else {
+        // Use all target locations if no specific location
+        locationIds = Object.values(locationIdMap);
+      }
+
+      // Use multi-page API for now to test HTML extraction
+      const items = await searchBidftaMultiPage(q || "", locationIds, 5); // Limit to 5 pages for speed
+      
+      // Apply additional filters
+      let filteredItems = items;
+      
+      if (status && status !== "unknown") {
+        filteredItems = filteredItems.filter(item => {
+          if (status === "active") {
+            return item.endDate ? item.endDate > new Date() : true;
+          } else if (status === "ended") {
+            return item.endDate ? item.endDate <= new Date() : false;
+          }
+          return true;
+        });
+      }
+      
+      if (!Number.isNaN(minBid)) {
+        filteredItems = filteredItems.filter(item => item.currentPrice && parseFloat(item.currentPrice) >= minBid);
+      }
+      
+      if (!Number.isNaN(maxBid)) {
+        filteredItems = filteredItems.filter(item => item.currentPrice && parseFloat(item.currentPrice) <= maxBid);
+      }
+
+      // Limit results
+      const limitedItems = filteredItems.slice(0, 200);
+      
+      res.json(limitedItems);
+    } catch (error) {
+      console.error("Search API error:", error);
+      res.status(500).json({ error: "Search failed" });
+    }
+  });
+
+  // ===== NEW AUCTION POLLING API ROUTES =====
+
+  // Get auction polling status
+  app.get("/api/auction-polling/status", (req, res) => {
+    const status = auctionPolling.getStatus();
+    res.json(status);
+  });
+
+  // Force discovery run
+  app.post("/api/auction-polling/discover", async (req, res) => {
+    try {
+      await auctionPolling.forceDiscovery();
+      res.json({ success: true, message: "Discovery started" });
+    } catch (error) {
+      res.status(500).json({ error: "Discovery failed", details: String(error) });
+    }
+  });
+
+  // Force polling run
+  app.post("/api/auction-polling/poll", async (req, res) => {
+    try {
+      await auctionPolling.forcePolling();
+      res.json({ success: true, message: "Polling started" });
+    } catch (error) {
+      res.status(500).json({ error: "Polling failed", details: String(error) });
+    }
+  });
+
+  // Get discovered auctions
+  app.get("/api/auction-polling/auctions", (req, res) => {
+    const auctions = auctionDiscovery.getDiscoveredAuctions();
+    res.json(auctions);
+  });
+
+  // Get active auctions
+  app.get("/api/auction-polling/auctions/active", (req, res) => {
+    const activeAuctions = auctionDiscovery.getActiveAuctions();
+    res.json(activeAuctions);
+  });
+
+  // Get auctions for specific location
+  app.get("/api/auction-polling/auctions/location/:locationId", (req, res) => {
+    const { locationId } = req.params;
+    const auctions = auctionDiscovery.getAuctionsForLocation(locationId);
+    res.json(auctions);
   });
 
   const httpServer = createServer(app);

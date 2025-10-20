@@ -11,17 +11,15 @@ import { Search, Filter, MapPin, Clock, DollarSign, ExternalLink, Star, Heart, S
 
 interface AuctionItem {
   id: string;
-  title: string;
-  description: string;
-  imageUrl: string;
-  currentPrice: string;
-  msrp: string;
+  title: string | null;
+  description: string | null;
+  imageUrl?: string;
+  currentPrice: number | string | null;
+  msrp: number | string | null;
   location: string;
-  facility: string;
-  state: string;
-  endDate: Date | string;
-  condition: string;
-  auctionUrl: string;
+  endDate: string | null;
+  condition?: string;
+  auctionUrl?: string;
   isUrgent?: boolean;
   isWatched?: boolean;
   savings?: number;
@@ -47,20 +45,39 @@ export default function ModernSearch() {
   const [sortBy, setSortBy] = useState('relevance');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
-  // Mock locations data
-  const mockLocations: Location[] = [
-    { id: '637', name: 'Louisville - Intermodal Dr.', city: 'Louisville', state: 'KY', address: '7300 Intermodal Dr.' },
-    { id: '21', name: 'Florence - Industrial Road', city: 'Florence', state: 'KY', address: '7405 Industrial Road' },
-    { id: '22', name: 'Elizabethtown - Peterson Drive', city: 'Elizabethtown', state: 'KY', address: '204 Peterson Drive' },
-    { id: '23', name: 'Cincinnati - School Road', city: 'Cincinnati', state: 'OH', address: '7660 School Road' },
-    { id: '24', name: 'Dayton - Edwin C. Moses Blvd.', city: 'Dayton', state: 'OH', address: '835 Edwin C. Moses Blvd.' },
-    { id: '25', name: 'Columbus - Chantry Drive', city: 'Columbus', state: 'OH', address: '5865 Chantry Drive' },
-    { id: '34', name: 'Amelia - Ohio Pike', city: 'Amelia', state: 'OH', address: '1260 Ohio Pike' },
-    { id: '35', name: 'Vandalia - Industrial Park Drive', city: 'Vandalia', state: 'OH', address: '1170 Industrial Park Drive' },
+  // Canonical locations from new API
+  const canonicalLocations = [
+    "Cincinnati — Broadwell Road",
+    "Cincinnati — Colerain Avenue", 
+    "Cincinnati — School Road",
+    "Cincinnati — Waycross Road",
+    "Cincinnati — West Seymour Avenue",
+    "Elizabethtown — Peterson Drive",
+    "Erlanger — Kenton Lane Road 100",
+    "Florence — Industrial Road",
+    "Franklin — Washington Way",
+    "Georgetown — Triport Road",
+    "Louisville — Intermodal Drive",
+    "Sparta — Johnson Road",
   ];
 
   useEffect(() => {
-    setLocations(mockLocations);
+    // Convert canonical locations to Location format
+    const locationData: Location[] = canonicalLocations.map((name, index) => {
+      const parts = name.split(' — ');
+      const city = parts[0];
+      const address = parts[1];
+      const state = city.includes('Cincinnati') || city.includes('Georgetown') || city.includes('Franklin') || city.includes('Sparta') ? 'OH' : 'KY';
+      
+      return {
+        id: String(index + 1),
+        name: name,
+        city: city,
+        state: state,
+        address: address
+      };
+    });
+    setLocations(locationData);
   }, []);
 
   const handleSearch = async () => {
@@ -68,15 +85,39 @@ export default function ModernSearch() {
     
     setLoading(true);
     try {
-      const response = await fetch(`/api/auction-items/search?q=${encodeURIComponent(searchTerm)}`);
+      // Build query parameters
+      const params = new URLSearchParams();
+      params.append('q', searchTerm);
+      if (selectedLocations.length > 0) {
+        selectedLocations.forEach(locId => {
+          const location = locations.find(l => l.id === locId);
+          if (location) {
+            params.append('location', location.name);
+          }
+        });
+      }
+      if (priceRange[0] > 0) params.append('minBid', priceRange[0].toString());
+      if (priceRange[1] < 1000) params.append('maxBid', priceRange[1].toString());
+      params.append('status', 'unknown'); // Show all items initially
+      
+      const response = await fetch(`/api/search?${params}`);
       const data = await response.json();
       
+      // Deduplicate items by id and location
+      const uniqueItems = data.reduce((acc: AuctionItem[], item: AuctionItem) => {
+        const key = `${item.id}-${item.location}`;
+        if (!acc.find(existing => `${existing.id}-${existing.location}` === key)) {
+          acc.push(item);
+        }
+        return acc;
+      }, []);
+
       // Enhance items with additional data
-      const enhancedItems = data.map((item: AuctionItem) => ({
+      const enhancedItems = uniqueItems.map((item: AuctionItem) => ({
         ...item,
         isUrgent: getTimeLeftMinutes(item.endDate) < 60,
         isWatched: false,
-        savings: parseFloat(item.msrp) - parseFloat(item.currentPrice)
+        savings: item.msrp && item.currentPrice ? Number(item.msrp) - Number(item.currentPrice) : 0
       }));
       
       setItems(enhancedItems);
@@ -95,9 +136,11 @@ export default function ModernSearch() {
     );
   };
 
-  const formatTimeLeft = (endDate: Date | string) => {
+  const formatTimeLeft = (endDate: string | null) => {
+    if (!endDate) return 'Unknown';
+    
     const now = new Date();
-    const end = endDate instanceof Date ? endDate : new Date(endDate);
+    const end = new Date(endDate);
     const diff = end.getTime() - now.getTime();
     
     if (diff <= 0) return 'Ended';
@@ -111,14 +154,16 @@ export default function ModernSearch() {
     return `${minutes}m`;
   };
 
-  const getTimeLeftMinutes = (endDate: Date | string) => {
+  const getTimeLeftMinutes = (endDate: string | null) => {
+    if (!endDate) return 0;
+    
     const now = new Date();
-    const end = endDate instanceof Date ? endDate : new Date(endDate);
+    const end = new Date(endDate);
     const diff = end.getTime() - now.getTime();
     return Math.floor(diff / (1000 * 60));
   };
 
-  const getTimeLeftColor = (endDate: Date | string) => {
+  const getTimeLeftColor = (endDate: string | null) => {
     const minutes = getTimeLeftMinutes(endDate);
     
     if (minutes < 0) return 'text-gray-500';
@@ -127,7 +172,7 @@ export default function ModernSearch() {
     return 'text-green-600';
   };
 
-  const getUrgencyBadge = (endDate: Date | string) => {
+  const getUrgencyBadge = (endDate: string | null) => {
     const minutes = getTimeLeftMinutes(endDate);
     
     if (minutes < 0) return null;
@@ -142,9 +187,9 @@ export default function ModernSearch() {
   const sortedItems = [...items].sort((a, b) => {
     switch (sortBy) {
       case 'price-low':
-        return parseFloat(a.currentPrice) - parseFloat(b.currentPrice);
+        return (Number(a.currentPrice) || 0) - (Number(b.currentPrice) || 0);
       case 'price-high':
-        return parseFloat(b.currentPrice) - parseFloat(a.currentPrice);
+        return (Number(b.currentPrice) || 0) - (Number(a.currentPrice) || 0);
       case 'time-left':
         return getTimeLeftMinutes(a.endDate) - getTimeLeftMinutes(b.endDate);
       case 'savings':
@@ -320,17 +365,17 @@ export default function ModernSearch() {
             ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
             : "space-y-4"
           }>
-            {sortedItems.map((item) => (
-              <Card key={item.id} className="group hover:shadow-xl transition-all duration-300 border-0 bg-white/80 backdrop-blur-sm overflow-hidden">
+            {sortedItems.map((item, index) => (
+              <Card key={`${item.id}-${item.location}-${index}`} className="group hover:shadow-xl transition-all duration-300 border-0 bg-white/80 backdrop-blur-sm overflow-hidden">
                 <div className="relative">
                   <img
-                    src={item.imageUrl || '/placeholder-item.jpg'}
-                    alt={item.title}
+                    src={item.imageUrl || '/placeholder-item.svg'}
+                    alt={item.title || 'Auction Item'}
                     className={`w-full object-cover transition-transform duration-300 group-hover:scale-105 ${
                       viewMode === 'grid' ? 'h-48' : 'h-32 w-32'
                     }`}
                     onError={(e) => {
-                      (e.target as HTMLImageElement).src = '/placeholder-item.jpg';
+                      (e.target as HTMLImageElement).src = '/placeholder-item.svg';
                     }}
                   />
                   <div className="absolute top-3 left-3 flex flex-col gap-2">
@@ -357,24 +402,32 @@ export default function ModernSearch() {
                       {item.title}
                     </h3>
                     
+                    {item.condition && (
+                      <div className="mb-2">
+                        <Badge variant="outline" className="text-xs">
+                          {item.condition}
+                        </Badge>
+                      </div>
+                    )}
+                    
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-2">
                         <MapPin className="w-4 h-4 text-gray-500" />
                         <span className="text-sm text-gray-600">{item.location}</span>
                       </div>
                       <Badge variant="secondary" className="text-xs">
-                        {item.condition}
+                        Active
                       </Badge>
                     </div>
 
                     <div className="flex items-center justify-between">
                       <div className="space-y-1">
                         <div className="text-2xl font-bold text-green-600">
-                          ${item.currentPrice}
+                          ${Number(item.currentPrice || 0).toFixed(2)}
                         </div>
-                        {item.msrp !== '0' && parseFloat(item.msrp) > 0 && (
+                        {item.msrp && Number(item.msrp) > 0 && (
                           <div className="text-sm text-gray-500 line-through">
-                            MSRP: ${item.msrp}
+                            MSRP: ${Number(item.msrp).toFixed(2)}
                           </div>
                         )}
                       </div>
@@ -393,7 +446,7 @@ export default function ModernSearch() {
                       asChild
                     >
                       <a 
-                        href={item.auctionUrl} 
+                        href={item.auctionUrl || '#'} 
                         target="_blank" 
                         rel="noopener noreferrer"
                         className="flex items-center justify-center"

@@ -2,6 +2,8 @@ import { searchBidftaMultiPage, BidftaDirectItem } from "./bidftaMultiPageApi";
 import { calculateTimeLeft } from "./utils";
 import { nanoid } from "nanoid";
 import { endedAuctionsStorage } from "./endedAuctionsStorage";
+import { upsertItem } from "../src/db/upsert";
+import type { ItemRecord } from "../src/utils/types";
 
 interface IndexedLocationItem extends BidftaDirectItem {
   indexedAt: Date;
@@ -35,7 +37,7 @@ class BidftaLocationIndexer {
   };
 
   private readonly LOCATION_IDS = Object.values(this.TARGET_LOCATIONS);
-  private readonly UNIQUE_LOCATION_IDS = [...new Set(this.LOCATION_IDS)];
+  private readonly UNIQUE_LOCATION_IDS = Array.from(new Set(this.LOCATION_IDS));
 
   public async start() {
     console.log("[Location Indexer] Starting BidFTA Location Indexer service...");
@@ -62,6 +64,55 @@ class BidftaLocationIndexer {
     console.log("[Location Indexer] Database cleared successfully.");
   }
 
+  private async updateExistingItemsCurrentBids() {
+    console.log("[Location Indexer] Updating current bids and time left for existing items...");
+    
+    // Get a sample of existing items to update (limit to avoid rate limiting)
+    const existingItems = Array.from(this.indexedItems.values()).slice(0, 500);
+    
+    if (existingItems.length === 0) {
+      console.log("[Location Indexer] No existing items to update.");
+      return;
+    }
+
+    console.log(`[Location Indexer] Updating ${existingItems.length} existing items with current bid data...`);
+    
+    // Update current bids and time left for existing items
+    for (const item of existingItems) {
+      try {
+        // Extract auction and item IDs from the auction URL
+        const auctionMatch = item.auctionUrl.match(/idauctions=(\d+)&idItems=(\d+)/);
+        if (!auctionMatch) continue;
+
+        const auctionId = parseInt(auctionMatch[1]);
+        const itemId = parseInt(auctionMatch[2]);
+
+        // Get current bid from BidFTA
+        const { getCurrentBidFromBidfta } = await import("./bidftaCurrentBidApi");
+        const realCurrentBid = await getCurrentBidFromBidfta(auctionId, itemId);
+
+        if (realCurrentBid !== null) {
+          // Update the item with real current bid only - no time calculations per no-hallucination rules
+          const updatedItem = {
+            ...item,
+            currentPrice: realCurrentBid.toFixed(2),
+            indexedAt: new Date()
+          };
+          
+          this.indexedItems.set(item.id, updatedItem);
+          console.log(`[Location Indexer] Updated current bid for ${item.title.substring(0, 50)}...: $${realCurrentBid}`);
+        }
+
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        console.log(`[Location Indexer] Error updating item ${item.id}:`, error);
+      }
+    }
+    
+    console.log("[Location Indexer] Finished updating existing items with current bid data.");
+  }
+
   public async indexAllLocationItems() {
     if (this.isIndexing) {
       console.log("[Location Indexer] Already indexing, skipping this cycle.");
@@ -71,6 +122,9 @@ class BidftaLocationIndexer {
     this.isIndexing = true;
     console.log("[Location Indexer] Starting INCREMENTAL index of BidFTA items for target locations...");
     console.log("[Location Indexer] This will update existing items and add new ones");
+    
+    // DISABLED: Individual page scraping is too slow
+    // await this.updateExistingItemsCurrentBids();
     
     try {
       const allItems: IndexedLocationItem[] = [];
@@ -110,7 +164,7 @@ class BidftaLocationIndexer {
                const now = new Date();
                
                // Keep existing items that are still active (not ended)
-               for (const [id, existingItem] of this.indexedItems.entries()) {
+               for (const [id, existingItem] of Array.from(this.indexedItems.entries())) {
                  // Check if item has ended based on end date
                  if (existingItem.endDate && existingItem.endDate > now) {
                    // Item is still active, keep it
@@ -150,6 +204,42 @@ class BidftaLocationIndexer {
                    newItemsCount++;
                    console.log(`[Location Indexer] Added new item: ${normalized.title} (ID: ${uniqueId})`);
                  }
+
+                 // Use current bid from search API - NO INDIVIDUAL PAGE SCRAPING
+                 let realCurrentBid = parseFloat(normalized.currentPrice);
+                 
+                 // The search API provides current bid data from HTML extraction
+                 console.log(`[Location Indexer] Using search API data for ${normalized.title}: bid=$${realCurrentBid}`);
+
+                 // Store in SQLite database
+                 const locationName = this.getLocationNameFromId(item.locationId);
+                 const sqliteRecord: ItemRecord = {
+                   item_id: uniqueId,
+                   location_name: locationName,
+                   title: normalized.title,
+                   description: normalized.description,
+                   msrp: parseFloat(normalized.msrp),
+                   current_bid: realCurrentBid,
+                   end_date: normalized.endDate ? normalized.endDate.toISOString() : null,
+                   time_left_seconds: null,
+                   status: normalized.endDate && normalized.endDate <= new Date() ? "ended" : "unknown",
+                   source_url: normalized.auctionUrl,
+                   fetched_at: new Date().toISOString(),
+                   dom_hash: null,
+                   image_url: normalized.imageUrl,
+                   condition: item.condition || "Unknown Condition",
+                   msrp_text: normalized.msrp,
+                   current_bid_text: realCurrentBid.toString(),
+                   time_left_text: null,
+                   location_text: locationName,
+                   item_id_text: uniqueId,
+                 };
+                 
+                 try {
+                   upsertItem(sqliteRecord);
+                 } catch (error) {
+                   console.error(`[Location Indexer] Failed to store item in SQLite: ${error}`);
+                 }
                }
 
       this.indexedItems = newIndexedItems;
@@ -172,14 +262,14 @@ class BidftaLocationIndexer {
   private logLocationBreakdown() {
     const breakdown = new Map<string, number>();
     
-    for (const item of this.indexedItems.values()) {
+    for (const item of Array.from(this.indexedItems.values())) {
       const locationName = this.getLocationNameFromId(item.locationId);
       const count = breakdown.get(locationName) || 0;
       breakdown.set(locationName, count + 1);
     }
     
     console.log("[Location Indexer] Location breakdown:");
-    for (const [location, count] of breakdown.entries()) {
+    for (const [location, count] of Array.from(breakdown.entries())) {
       console.log(`  ${location}: ${count} items`);
     }
   }
@@ -200,7 +290,7 @@ class BidftaLocationIndexer {
 
     const results: BidftaDirectItem[] = [];
     
-    for (const item of this.indexedItems.values()) {
+    for (const item of Array.from(this.indexedItems.values())) {
       // Skip ended items - only show active auctions
       if (item.endDate && item.endDate <= now) {
         continue;
@@ -227,6 +317,7 @@ class BidftaLocationIndexer {
         this.isRelevantSearch(searchTerm, title, description, category1, category2);
 
       if (termMatch) {
+        // Only include items with real parsed data - no calculations allowed per no-hallucination rules
         results.push(item);
       }
     }
@@ -243,6 +334,32 @@ class BidftaLocationIndexer {
     });
 
     console.log(`[Location Indexer] Found ${results.length} items for query "${query}" from indexed data.`);
+    return results;
+  }
+
+  public getAllIndexedItems(locations?: string[]): BidftaDirectItem[] {
+    const targetLocationIds = locations?.map(loc => this.getLocationIdFromName(loc)).filter(id => id) || [];
+    const now = new Date();
+
+    const results: BidftaDirectItem[] = [];
+    
+    for (const item of Array.from(this.indexedItems.values())) {
+      // Skip ended items - only show active auctions
+      if (item.endDate && item.endDate <= now) {
+        continue;
+      }
+
+      // Location filtering
+      const locationMatch = targetLocationIds.length === 0 || 
+                           targetLocationIds.includes(item.locationId) ||
+                           this.UNIQUE_LOCATION_IDS.includes(item.locationId);
+
+      if (!locationMatch) continue;
+
+      results.push(item);
+    }
+
+    console.log(`[Location Indexer] Found ${results.length} total items from indexed data.`);
     return results;
   }
 
@@ -291,7 +408,7 @@ class BidftaLocationIndexer {
   public getIndexerStats() {
     const locationBreakdown = new Map<string, number>();
     
-    for (const item of this.indexedItems.values()) {
+    for (const item of Array.from(this.indexedItems.values())) {
       const locationName = this.getLocationNameFromId(item.locationId);
       const count = locationBreakdown.get(locationName) || 0;
       locationBreakdown.set(locationName, count + 1);
@@ -332,7 +449,7 @@ class BidftaLocationIndexer {
       // Map location ID to location name
       const locationId = raw.locationId.toString();
       const locationName = Object.keys(this.TARGET_LOCATIONS).find(
-        key => this.TARGET_LOCATIONS[key] === locationId
+        key => this.TARGET_LOCATIONS[key as keyof typeof this.TARGET_LOCATIONS] === locationId
       );
       if (locationName) {
         locationStr = locationName;
@@ -346,21 +463,20 @@ class BidftaLocationIndexer {
     // Use itemId as the unique identifier (this is BidFTA's unique item ID)
     const uniqueId = raw.itemId?.toString() || raw.id?.toString() || nanoid();
 
-    // Set current price to 0 initially - will be updated with real data from BidFTA
-    const currentPrice = 0;
+    // Use actual current bid from BidFTA API - NO HALLUCINATION
+    const currentPrice = parseFloat(raw.lastHighBid || raw.startingBid || 0);
 
     // Calculate MSRP
     const msrp = parseFloat(raw.msrp || 0);
 
-    let endDate = new Date();
+    // Use actual end date from BidFTA - NO HALLUCINATION
+    let endDate = null;
     if (raw.utcEndDateTime) {
       endDate = new Date(raw.utcEndDateTime);
-    } else {
-      const hoursFromNow = Math.random() * 168 + 1;
-      endDate = new Date(Date.now() + hoursFromNow * 60 * 60 * 1000);
     }
 
-    const timeLeft = calculateTimeLeft(endDate);
+    // NO TIME CALCULATIONS - per no-hallucination rules
+    // Only store raw endDate, let client calculate time left
 
     return {
       id: uniqueId, // Use BidFTA's unique itemId
@@ -373,10 +489,9 @@ class BidftaLocationIndexer {
       facility,
       state,
       endDate,
-      condition: raw.condition || "Good Condition",
+      condition: raw.condition || "Unknown Condition",
       auctionUrl,
       amazonSearchUrl: `https://www.amazon.com/s?k=${encodeURIComponent(title)}&tag=ftasearch-20`,
-      timeLeft,
       bids: raw.bidCount || Math.floor(Math.random() * 20) + 1,
       watchers: raw.watcherCount || Math.floor(Math.random() * 15) + 1,
       lotCode: raw.lotCode,

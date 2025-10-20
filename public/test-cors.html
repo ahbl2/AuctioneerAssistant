@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CORS Test</title>
+</head>
+<body>
+    <h1>CORS Test</h1>
+    <button onclick="testCORS()">Test CORS</button>
+    <div id="result"></div>
+
+    <script>
+        async function testCORS() {
+            const resultDiv = document.getElementById('result');
+            try {
+                const response = await fetch('http://localhost:3000/search?q=chair');
+                const data = await response.json();
+                resultDiv.innerHTML = `
+                    <h3>✅ CORS Working!</h3>
+                    <p>Found ${data.length} items</p>
+                    <p>Sample: ${data[0]?.title || 'No title'}</p>
+                    <p>Current bid: $${data[0]?.current_bid || '0.00'}</p>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <h3>❌ CORS Error</h3>
+                    <p>${error.message}</p>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>
