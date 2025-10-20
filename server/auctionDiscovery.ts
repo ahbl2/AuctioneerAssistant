@@ -6,6 +6,7 @@
  */
 
 import { log } from "../src/utils/logging";
+import { storage } from "./storage";
 
 export interface AuctionInfo {
   auctionId: string;

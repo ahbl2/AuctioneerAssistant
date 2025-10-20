@@ -374,19 +374,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         locationIds = Object.values(locationIdMap);
       }
 
-      // Use database storage for instant results (no re-scanning needed)
-      const result = await storage.filterAuctionItems({
-        searchQuery: q || "",
-        minPrice: !Number.isNaN(minBid) ? minBid : undefined,
-        maxPrice: !Number.isNaN(maxBid) ? maxBid : undefined,
-        // Add location filtering if needed
-        facilities: location ? [location] : undefined,
-        page: 1,
-        limit: 1000 // Get up to 1000 results
-      });
+      // Use multi-page API for comprehensive results with pagination
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = Math.min(parseInt(req.query.limit as string) || 100, 500); // Max 500 items per page
+      const offset = (page - 1) * limit;
       
-      // Apply status filtering
-      let filteredItems = result.items;
+      const items = await searchBidftaMultiPage(q || "", locationIds, 50); // Fetch up to 50 pages for all results
+      
+      // Apply additional filters
+      let filteredItems = items;
       
       if (status && status !== "unknown") {
         filteredItems = filteredItems.filter(item => {
@@ -399,8 +395,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Return all results - no artificial limits
-      res.json(filteredItems);
+      // Apply pagination to prevent memory issues
+      const totalItems = filteredItems.length;
+      const paginatedItems = filteredItems.slice(offset, offset + limit);
+      const totalPages = Math.ceil(totalItems / limit);
+      
+      // Return paginated results
+      res.json({
+        items: paginatedItems,
+        pagination: {
+          page,
+          limit,
+          totalItems,
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1
+        }
+      });
     } catch (error) {
       console.error("Search API error:", error);
       res.status(500).json({ error: "Search failed" });
