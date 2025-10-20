@@ -205,6 +205,9 @@ export class BackgroundIndexer {
    */
   private async processItem(item: any, locationName: string): Promise<boolean> {
     try {
+      // Debug logging for image URL
+      console.log(`[Background Indexer] Processing item ${item.id || item.itemId}: imageUrl = "${item.imageUrl}"`);
+      
       // Create minimal snippet for hash calculation
       const snippet = JSON.stringify({
         id: item.id,
@@ -236,12 +239,16 @@ export class BackgroundIndexer {
         source_url: item.auctionUrl || `https://www.bidfta.com/itemDetails?idauctions=${item.auctionId}&idItems=${item.id}`,
         fetched_at: new Date().toISOString(),
         dom_hash: domHash,
+        image_url: item.imageUrl || null,
+        condition: item.condition || null,
         msrp_text: item.msrp || null,
         current_bid_text: item.currentPrice || null,
         time_left_text: item.timeLeft || null,
         location_text: locationName,
         item_id_text: item.id || item.itemId || item.item_id || null
       };
+
+      console.log(`[Background Indexer] Storing item with image_url: "${record.image_url}"`);
 
       // UPSERT the item
       sqliteStorage.upsertItem(record);

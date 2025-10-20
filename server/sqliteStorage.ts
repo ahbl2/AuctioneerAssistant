@@ -25,6 +25,8 @@ export interface ItemRecord {
   source_url: string;
   fetched_at: string;                 // ISO-8601 at fetch time
   dom_hash: string | null;
+  image_url: string | null;           // Image URL for the item
+  condition: string | null;           // Item condition
   // raw echoes for audit
   msrp_text: string | null;
   current_bid_text: string | null;
@@ -66,6 +68,8 @@ export class SQLiteStorage {
         source_url TEXT NOT NULL,
         fetched_at TEXT NOT NULL,         -- ISO-8601 when this record was refreshed
         dom_hash TEXT,
+        image_url TEXT,                   -- Image URL for the item
+        condition TEXT,                   -- Item condition
         msrp_text TEXT,
         current_bid_text TEXT,
         time_left_text TEXT,
@@ -74,6 +78,19 @@ export class SQLiteStorage {
         PRIMARY KEY (item_id, location_name)
       )
     `);
+
+    // Add missing columns if they don't exist (migration)
+    try {
+      this.db.exec(`ALTER TABLE items ADD COLUMN image_url TEXT`);
+    } catch (e) {
+      // Column already exists, ignore
+    }
+    
+    try {
+      this.db.exec(`ALTER TABLE items ADD COLUMN condition TEXT`);
+    } catch (e) {
+      // Column already exists, ignore
+    }
 
     // Create indexes for fast queries
     this.db.exec(`
@@ -94,8 +111,8 @@ export class SQLiteStorage {
       INSERT INTO items (
         item_id, location_name, title, description, msrp, current_bid,
         end_date, time_left_seconds, status, source_url, fetched_at,
-        dom_hash, msrp_text, current_bid_text, time_left_text, location_text, item_id_text
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        dom_hash, image_url, condition, msrp_text, current_bid_text, time_left_text, location_text, item_id_text
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(item_id, location_name) DO UPDATE SET
         title = excluded.title,
         description = excluded.description,
@@ -107,6 +124,8 @@ export class SQLiteStorage {
         source_url = excluded.source_url,
         fetched_at = excluded.fetched_at,
         dom_hash = excluded.dom_hash,
+        image_url = excluded.image_url,
+        condition = excluded.condition,
         msrp_text = excluded.msrp_text,
         current_bid_text = excluded.current_bid_text,
         time_left_text = excluded.time_left_text,
@@ -146,12 +165,25 @@ export class SQLiteStorage {
       rec.source_url,
       rec.fetched_at,
       rec.dom_hash,
+      rec.image_url,
+      rec.condition,
       rec.msrp_text,
       rec.current_bid_text,
       rec.time_left_text,
       rec.location_text,
       rec.item_id_text
     );
+  }
+
+  /**
+   * Get a specific item by ID and location
+   */
+  getItem(itemId: string, locationName: string): ItemRecord | null {
+    const stmt = this.db.prepare(`
+      SELECT * FROM items 
+      WHERE item_id = ? AND location_name = ?
+    `);
+    return stmt.get(itemId, locationName) as ItemRecord | null;
   }
 
   /**
