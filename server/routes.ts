@@ -358,6 +358,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         limit
       });
 
+      // If no results and database is empty, return empty result instead of waiting
+      if (result.items.length === 0 && result.total === 0) {
+        res.json({
+          items: [],
+          pagination: {
+            page,
+            limit,
+            totalItems: 0,
+            totalPages: 0,
+            hasNextPage: false,
+            hasPrevPage: false
+          }
+        });
+        return;
+      }
+
       // Apply status filtering (since SQLite doesn't handle complex date logic)
       let filteredItems = result.items;
       if (status && status !== "unknown") {

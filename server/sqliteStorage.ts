@@ -114,7 +114,7 @@ export class SQLiteStorage {
         item_id_text = excluded.item_id_text
     `);
 
-    // Search statement
+    // Search statement (optimized for speed)
     this.searchStmt = this.db.prepare(`
       SELECT * FROM items 
       WHERE status = 'active'

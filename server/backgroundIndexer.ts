@@ -12,8 +12,8 @@ import { log } from '../src/utils/logging';
 export class BackgroundIndexer {
   private isRunning: boolean = false;
   private intervalId: NodeJS.Timeout | null = null;
-  private readonly INDEX_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-  private readonly DISCOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+  private readonly INDEX_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes (reduced frequency)
+  private readonly DISCOVERY_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours (reduced frequency)
   private lastDiscovery: Date | null = null;
   private discoveredAuctions: Map<string, string[]> = new Map(); // location -> auctionIds
 
@@ -45,13 +45,15 @@ export class BackgroundIndexer {
     log.info("[Background Indexer] Starting background indexer...");
     this.isRunning = true;
 
-    // Run initial discovery and indexing
-    this.runDiscoveryAndIndexing();
-
-    // Set up periodic indexing
+    // Set up periodic indexing (delayed start)
     this.intervalId = setInterval(() => {
       this.runIndexing();
     }, this.INDEX_INTERVAL_MS);
+
+    // Run initial discovery and indexing after a delay to let server start
+    setTimeout(() => {
+      this.runDiscoveryAndIndexing();
+    }, 30000); // 30 second delay
   }
 
   /**
@@ -139,7 +141,7 @@ export class BackgroundIndexer {
   }
 
   /**
-   * Index all discovered auctions
+   * Index all discovered auctions (non-blocking)
    */
   private async indexAllAuctions(): Promise<void> {
     log.info("[Background Indexer] Starting auction indexing...");
@@ -147,29 +149,52 @@ export class BackgroundIndexer {
     let totalItemsProcessed = 0;
     let totalItemsChanged = 0;
 
-    for (const [locationName, auctionIds] of Array.from(this.discoveredAuctions.entries())) {
-      try {
-        const locationId = this.TARGET_LOCATIONS[locationName];
-        if (!locationId) continue;
+    // Process locations in smaller batches to avoid blocking
+    const locationEntries = Array.from(this.discoveredAuctions.entries());
+    const batchSize = 2; // Process only 2 locations at a time
+    
+    for (let i = 0; i < locationEntries.length; i += batchSize) {
+      const batch = locationEntries.slice(i, i + batchSize);
+      
+      // Process batch in parallel but with limited concurrency
+      const batchPromises = batch.map(async ([locationName, auctionIds]) => {
+        try {
+          const locationId = this.TARGET_LOCATIONS[locationName];
+          if (!locationId) return { processed: 0, changed: 0 };
 
-        // Fetch items for this location
-        const items = await searchBidftaMultiPage("", [locationId], 20); // 20 pages per location
-        
-        for (const item of items) {
-          const processed = await this.processItem(item, locationName);
-          totalItemsProcessed++;
-          if (processed) {
-            totalItemsChanged++;
+          // Fetch fewer pages to reduce load
+          const items = await searchBidftaMultiPage("", [locationId], 5); // Reduced from 20 to 5 pages
+          
+          let processed = 0;
+          let changed = 0;
+          
+          for (const item of items) {
+            const itemProcessed = await this.processItem(item, locationName);
+            processed++;
+            if (itemProcessed) {
+              changed++;
+            }
           }
-        }
 
-        log.info(`[Background Indexer] Processed ${items.length} items for ${locationName}`);
-        
-        // Small delay between locations
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      } catch (error) {
-        log.error(`[Background Indexer] Error indexing ${locationName}: ${error}`);
-      }
+          log.info(`[Background Indexer] Processed ${items.length} items for ${locationName}`);
+          return { processed, changed };
+        } catch (error) {
+          log.error(`[Background Indexer] Error indexing ${locationName}: ${error}`);
+          return { processed: 0, changed: 0 };
+        }
+      });
+
+      // Wait for batch to complete
+      const batchResults = await Promise.all(batchPromises);
+      
+      // Update totals
+      batchResults.forEach(result => {
+        totalItemsProcessed += result.processed;
+        totalItemsChanged += result.changed;
+      });
+
+      // Longer delay between batches to reduce server load
+      await new Promise(resolve => setTimeout(resolve, 5000));
     }
 
     log.info(`[Background Indexer] Indexing completed. Processed ${totalItemsProcessed} items, ${totalItemsChanged} changed`);
