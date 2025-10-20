@@ -374,8 +374,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         locationIds = Object.values(locationIdMap);
       }
 
-      // Use multi-page API for now to test HTML extraction
-      const items = await searchBidftaMultiPage(q || "", locationIds, 5); // Limit to 5 pages for speed
+      // Use multi-page API for comprehensive results
+      const items = await searchBidftaMultiPage(q || "", locationIds, 50); // Fetch up to 50 pages for all results
       
       // Apply additional filters
       let filteredItems = items;
@@ -399,10 +399,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         filteredItems = filteredItems.filter(item => item.currentPrice && parseFloat(item.currentPrice) <= maxBid);
       }
 
-      // Limit results
-      const limitedItems = filteredItems.slice(0, 200);
-      
-      res.json(limitedItems);
+      // Return all results - no artificial limits
+      res.json(filteredItems);
     } catch (error) {
       console.error("Search API error:", error);
       res.status(500).json({ error: "Search failed" });

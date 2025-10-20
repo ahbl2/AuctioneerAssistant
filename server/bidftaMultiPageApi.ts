@@ -303,15 +303,10 @@ function parseItemsFromHTML(html: string): any[] {
   }
 }
 
-export async function searchBidftaMultiPage(query: string, locations?: string[], maxPages: number = 8): Promise<BidftaDirectItem[]> {
+export async function searchBidftaMultiPage(query: string, locations?: string[], maxPages: number = 50): Promise<BidftaDirectItem[]> {
   console.log(`[BidFTA MultiPage] Searching for: "${query}" with locations:`, locations);
 
-  const cacheKey = `${query}_${locations?.join(',') || 'all'}`;
-  const cached = searchCache.get(cacheKey);
-  if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
-    console.log(`[BidFTA MultiPage] Cache hit - returning ${cached.data.length} items instantly`);
-    return cached.data;
-  }
+  // Cache completely disabled to ensure fresh data fetching
   
   try {
     // Fetch multiple pages to get more comprehensive results
@@ -378,8 +373,7 @@ export async function searchBidftaMultiPage(query: string, locations?: string[],
       // Convert to our format
       const result = relevantItems.map(normalizeBidftaItem);
 
-      // Cache the result
-      searchCache.set(cacheKey, { data: result, timestamp: Date.now() });
+      // Return result without caching
       return result;
     } else {
       console.log(`[BidFTA MultiPage] No results from API, using fallback`);
@@ -392,23 +386,26 @@ export async function searchBidftaMultiPage(query: string, locations?: string[],
   }
 }
 
-async function fetchMultiplePages(query: string, locations?: string[], maxPages: number = 8): Promise<any[]> {
+async function fetchMultiplePages(query: string, locations?: string[], maxPages: number = 50): Promise<any[]> {
   const searchUrl = 'https://www.bidfta.com/items';
   const allItems: any[] = [];
   const minRelevantItems = query ? 10 : 0; // For comprehensive indexing (no query), don't stop early
   
   console.log(`[BidFTA MultiPage] Fetching up to ${maxPages} pages for comprehensive results`);
 
-  for (let page = 1; page <= maxPages; page++) {
-    try {
-      // Use the first location ID from the locations array, or default to 23 (Cincinnati)
-      const locationIdForApi = locations && locations.length > 0 ? locations[0] : "23";
-      
-      const params = new URLSearchParams({
-        pageId: page.toString(),
-        itemSearchKeywords: query,
-        locationId: locationIdForApi
-      });
+  // If we have multiple locations, search each location separately and combine results
+  const locationsToSearch = locations && locations.length > 0 ? locations : ["23"];
+  
+  for (const locationId of locationsToSearch) {
+    console.log(`[BidFTA MultiPage] Searching location ${locationId}...`);
+    
+    for (let page = 1; page <= maxPages; page++) {
+      try {
+        const params = new URLSearchParams({
+          pageId: page.toString(),
+          itemSearchKeywords: query,
+          locationId: locationId
+        });
 
       console.log(`[BidFTA MultiPage] Fetching page ${page}...`);
 
@@ -509,8 +506,8 @@ async function fetchMultiplePages(query: string, locations?: string[], maxPages:
         // Don't stop early - fetch multiple pages to get more comprehensive results
         // The filtering will happen later in the main function
 
-        // If we got less than 24 items, we've reached the end
-        if (items.length < 24) {
+        // If we got no items, we've reached the end
+        if (items.length === 0) {
           console.log(`[BidFTA MultiPage] Reached end of results on page ${page}`);
           break;
         }
@@ -525,6 +522,9 @@ async function fetchMultiplePages(query: string, locations?: string[], maxPages:
       console.log(`[BidFTA MultiPage] Error fetching page ${page}:`, error);
       break;
     }
+    }
+    
+    console.log(`[BidFTA MultiPage] Completed location ${locationId} - found ${allItems.length} total items so far`);
   }
 
   console.log(`[BidFTA MultiPage] Total items fetched: ${allItems.length}`);
