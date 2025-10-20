@@ -374,11 +374,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         locationIds = Object.values(locationIdMap);
       }
 
-      // Use multi-page API for comprehensive results
-      const items = await searchBidftaMultiPage(q || "", locationIds, 50); // Fetch up to 50 pages for all results
+      // Use database storage for instant results (no re-scanning needed)
+      const result = await storage.filterAuctionItems({
+        searchQuery: q || "",
+        minPrice: !Number.isNaN(minBid) ? minBid : undefined,
+        maxPrice: !Number.isNaN(maxBid) ? maxBid : undefined,
+        // Add location filtering if needed
+        facilities: location ? [location] : undefined,
+        page: 1,
+        limit: 1000 // Get up to 1000 results
+      });
       
-      // Apply additional filters
-      let filteredItems = items;
+      // Apply status filtering
+      let filteredItems = result.items;
       
       if (status && status !== "unknown") {
         filteredItems = filteredItems.filter(item => {
@@ -389,14 +397,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           return true;
         });
-      }
-      
-      if (!Number.isNaN(minBid)) {
-        filteredItems = filteredItems.filter(item => item.currentPrice && parseFloat(item.currentPrice) >= minBid);
-      }
-      
-      if (!Number.isNaN(maxBid)) {
-        filteredItems = filteredItems.filter(item => item.currentPrice && parseFloat(item.currentPrice) <= maxBid);
       }
 
       // Return all results - no artificial limits
