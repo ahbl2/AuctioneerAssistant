@@ -89,12 +89,14 @@ app.use((req, res, next) => {
     }
 
 // Start background indexer for fast searches (optimized for urgent auctions only)
-try {
-  backgroundIndexer.start();
-  log('Background Indexer service started (urgent auctions only)');
-} catch (error) {
-  log('Failed to start background indexer service:', String(error));
-}
+// Temporarily disabled to focus on live urgent search only
+// try {
+//   backgroundIndexer.start();
+//   log('Background Indexer service started (urgent auctions only)');
+// } catch (error) {
+//   log('Failed to start background indexer service:', String(error));
+// }
+log('Background Indexer temporarily disabled - using live urgent search only');
 
     // Start the crawler service
     try {
