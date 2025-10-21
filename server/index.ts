@@ -88,13 +88,14 @@ app.use((req, res, next) => {
       log('Failed to start auction polling service:', String(error));
     }
 
-    // Start background indexer for fast searches
-    try {
-      backgroundIndexer.start();
-      log('Background Indexer service started');
-    } catch (error) {
-      log('Failed to start background indexer service:', String(error));
-    }
+// Start background indexer for fast searches
+// DISABLED: Background indexer causing memory issues
+// try {
+//   backgroundIndexer.start();
+//   log('Background Indexer service started');
+// } catch (error) {
+//   log('Failed to start background indexer service:', String(error));
+// }
 
     // Start the crawler service
     try {
