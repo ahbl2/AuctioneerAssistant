@@ -356,18 +356,19 @@ app.get("/api/search", async (req, res) => {
     // Convert location name to location ID if needed
     let locationIds = [];
     if (location) {
-      // Map location names to IDs (corrected based on background indexer)
+      // Map location names to IDs (exactly matching background indexer)
       const locationMap = {
         "Cincinnati — Broadwell Road": "23",
+        "Cincinnati — Colerain Avenue": "22",
         "Cincinnati — School Road": "21", 
         "Cincinnati — Waycross Road": "31",
         "Cincinnati — West Seymour Avenue": "34",
-        "Florence — Industrial Road": "26",
-        "Louisville — Intermodal Drive": "29",
         "Elizabethtown — Peterson Drive": "24",
+        "Erlanger — Kenton Lane Road 100": "25",
+        "Florence — Industrial Road": "26",
         "Franklin — Washington Way": "27",
         "Georgetown — Triport Road": "28",
-        "Erlanger — Kenton Lane Road 100": "25",
+        "Louisville — Intermodal Drive": "29",
         "Sparta — Johnson Road": "30"
       };
       const locationId = locationMap[location];
@@ -375,8 +376,8 @@ app.get("/api/search", async (req, res) => {
         locationIds = [locationId];
       }
     } else {
-      // Use all our target locations if no specific location
-      locationIds = ["23", "21", "31", "34", "26", "29", "24", "27", "28", "25", "30"];
+      // Use all our target locations if no specific location (exactly matching background indexer)
+      locationIds = ["23", "22", "21", "31", "34", "24", "25", "26", "27", "28", "29", "30"];
     }
 
     console.log(`[Search] Searching locations: ${locationIds.join(', ')}`);
@@ -386,18 +387,58 @@ app.get("/api/search", async (req, res) => {
     
     console.log(`[Search] Fetched ${freshItems.length} total items from BidFTA`);
     
+    // First filter by our target locations
+    const targetLocationNames = [
+      "Cincinnati - 8485 Broadwell Road",
+      "Cincinnati - 8485 Colerain Avenue", 
+      "Cincinnati - 8485 School Road",
+      "Cincinnati - 8485 Waycross Road",
+      "Cincinnati - 8485 West Seymour Avenue",
+      "Elizabethtown - 7405 Peterson Drive",
+      "Erlanger - 7405 Kenton Lane Road 100",
+      "Florence - 7405 Industrial Road",
+      "Franklin - 7405 Washington Way",
+      "Georgetown - 7405 Triport Road",
+      "Louisville - 7300 Intermodal Dr.",
+      "Sparta - 7405 Johnson Road"
+    ];
+    
+    const locationFilteredItems = freshItems.filter(item => {
+      const itemLocation = item.location || "";
+      
+      // Check if location matches our target cities
+      const targetCities = [
+        "Cincinnati", "Elizabethtown", "Erlanger", "Florence", 
+        "Franklin", "Georgetown", "Louisville", "Sparta"
+      ];
+      
+      const isTargetLocation = targetCities.some(city => 
+        itemLocation.toLowerCase().includes(city.toLowerCase())
+      );
+      
+      if (!isTargetLocation) {
+        console.log(`[Search] Filtering out item from unwanted location: ${itemLocation}`);
+      } else {
+        console.log(`[Search] Keeping item from target location: ${itemLocation}`);
+      }
+      
+      return isTargetLocation;
+    });
+    
+    console.log(`[Search] After location filtering: ${locationFilteredItems.length} items from target locations`);
+    
     // Filter for urgent auctions (1 hour or less)
     const now = new Date();
     const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour from now
     
-    const urgentItems = freshItems.filter(item => {
+    const urgentItems = locationFilteredItems.filter(item => {
       if (!item.endDate) return false;
       const endDate = new Date(item.endDate);
       const timeLeft = endDate.getTime() - now.getTime();
       const isUrgent = timeLeft > 0 && timeLeft <= (60 * 60 * 1000); // 1 hour in milliseconds
       
       if (isUrgent) {
-        console.log(`[Search] Urgent item: ${item.title} - ends in ${Math.round(timeLeft / 60000)} minutes`);
+        console.log(`[Search] Urgent item: ${item.title} - ends in ${Math.round(timeLeft / 60000)} minutes - location: ${item.location}`);
       }
       
       return isUrgent;
