@@ -358,101 +358,11 @@ app.get("/api/search", async (req, res) => {
       limit
     });
 
-    // If we have enough results from database, use them
-    if (dbResults.items.length >= Math.min(limit, 20)) {
-      console.log(`[Search] Using ${dbResults.items.length} items from database (urgent auctions)`);
-      
-      // Apply status filter to database results
-      let filteredItems = dbResults.items;
-      if (status && status !== "unknown") {
-        filteredItems = filteredItems.filter(item => {
-          if (status === "active") {
-            return item.end_date ? new Date(item.end_date) > new Date() : true;
-          } else if (status === "ended") {
-            return item.end_date ? new Date(item.end_date) <= new Date() : false;
-          }
-          return true;
-        });
-      }
-
-      // Apply pagination
-      const startIndex = (page - 1) * limit;
-      const endIndex = startIndex + limit;
-      const paginatedItems = filteredItems.slice(startIndex, endIndex);
-      const totalPages = Math.ceil(filteredItems.length / limit);
-      
-      return res.json({
-        items: paginatedItems,
-        pagination: {
-          page,
-          limit,
-          totalItems: filteredItems.length,
-          totalPages,
-          hasNextPage: page < totalPages,
-          hasPrevPage: page > 1
-        },
-        source: "database"
-      });
-    }
-
-    // Fallback to live data if database doesn't have enough results
-    console.log(`[Search] Database has ${dbResults.items.length} items, fetching live data...`);
-    const { searchBidftaMultiPage } = await import('./bidftaMultiPageApi');
+    // Always use database results for instant searches (no live fallback)
+    console.log(`[Search] Using ${dbResults.items.length} items from database (urgent auctions only)`);
     
-    // Convert location name to location ID if needed
-    let locationIds = [];
-    if (location) {
-      // Map location names to IDs
-      const locationMap = {
-        "Cincinnati — Broadwell Road": "2",
-        "Cincinnati — School Road": "2", 
-        "Cincinnati — Waycross Road": "2",
-        "Cincinnati — West Seymour Avenue": "2",
-        "Florence — Industrial Road": "21",
-        "Louisville — Intermodal Drive": "34",
-        "Elizabethtown — Peterson Drive": "4",
-        "Franklin — Washington Way": "26",
-        "Georgetown — Triport Road": "23",
-        "Erlanger — Kenton Lane Road 100": "26",
-        "Sparta — Johnson Road": "100"
-      };
-      const locationId = locationMap[location];
-      if (locationId) {
-        locationIds = [locationId];
-      }
-    } else {
-      // Use all locations if no specific location
-      locationIds = ["2", "21", "34", "4", "26", "23", "100"];
-    }
-
-    // Fetch fresh data from BidFTA
-    const freshItems = await searchBidftaMultiPage(q || "", locationIds, 5);
-    
-    // Convert to database format
-    const items = freshItems.map(item => ({
-      item_id: item.id,
-      location_name: item.location || "Unknown Location",
-      title: item.title,
-      description: item.description,
-      msrp: parseFloat(item.msrp) || 0,
-      current_bid: parseFloat(item.currentPrice) || 0,
-      end_date: item.endDate ? new Date(item.endDate).toISOString() : null,
-      time_left_seconds: null,
-      status: "active",
-      source_url: item.auctionUrl,
-      fetched_at: new Date().toISOString(),
-      dom_hash: null,
-      image_url: item.imageUrl,
-      condition: item.condition,
-      msrp_text: item.msrp,
-      current_bid_text: item.currentPrice,
-      time_left_text: null,
-      location_text: item.location,
-      item_id_text: item.id
-    }));
-
-    // Apply filters
-    let filteredItems = items;
+    // Apply status filter to database results
+    let filteredItems = dbResults.items;
     if (status && status !== "unknown") {
       filteredItems = filteredItems.filter(item => {
         if (status === "active") {
@@ -464,21 +374,13 @@ app.get("/api/search", async (req, res) => {
       });
     }
 
-    if (!Number.isNaN(minBid)) {
-      filteredItems = filteredItems.filter(item => item.current_bid >= minBid);
-    }
-    if (!Number.isNaN(maxBid)) {
-      filteredItems = filteredItems.filter(item => item.current_bid <= maxBid);
-    }
-
     // Apply pagination
     const startIndex = (page - 1) * limit;
     const endIndex = startIndex + limit;
     const paginatedItems = filteredItems.slice(startIndex, endIndex);
     const totalPages = Math.ceil(filteredItems.length / limit);
     
-    // Return paginated results
-    res.json({
+    return res.json({
       items: paginatedItems,
       pagination: {
         page,
@@ -488,7 +390,7 @@ app.get("/api/search", async (req, res) => {
         hasNextPage: page < totalPages,
         hasPrevPage: page > 1
       },
-      source: "live"
+      source: "database"
     });
   } catch (error) {
     console.error("Search API error:", error);
