@@ -356,31 +356,35 @@ app.get("/api/search", async (req, res) => {
     // Convert location name to location ID if needed
     let locationIds = [];
     if (location) {
-      // Map location names to IDs
+      // Map location names to IDs (corrected based on background indexer)
       const locationMap = {
-        "Cincinnati — Broadwell Road": "2",
-        "Cincinnati — School Road": "2", 
-        "Cincinnati — Waycross Road": "2",
-        "Cincinnati — West Seymour Avenue": "2",
-        "Florence — Industrial Road": "21",
-        "Louisville — Intermodal Drive": "34",
-        "Elizabethtown — Peterson Drive": "4",
-        "Franklin — Washington Way": "26",
-        "Georgetown — Triport Road": "23",
-        "Erlanger — Kenton Lane Road 100": "26",
-        "Sparta — Johnson Road": "100"
+        "Cincinnati — Broadwell Road": "23",
+        "Cincinnati — School Road": "21", 
+        "Cincinnati — Waycross Road": "31",
+        "Cincinnati — West Seymour Avenue": "34",
+        "Florence — Industrial Road": "26",
+        "Louisville — Intermodal Drive": "29",
+        "Elizabethtown — Peterson Drive": "24",
+        "Franklin — Washington Way": "27",
+        "Georgetown — Triport Road": "28",
+        "Erlanger — Kenton Lane Road 100": "25",
+        "Sparta — Johnson Road": "30"
       };
       const locationId = locationMap[location];
       if (locationId) {
         locationIds = [locationId];
       }
     } else {
-      // Use all locations if no specific location
-      locationIds = ["2", "21", "34", "4", "26", "23", "100"];
+      // Use all our target locations if no specific location
+      locationIds = ["23", "21", "31", "34", "26", "29", "24", "27", "28", "25", "30"];
     }
 
+    console.log(`[Search] Searching locations: ${locationIds.join(', ')}`);
+    
     // Fetch fresh data from BidFTA
     const freshItems = await searchBidftaMultiPage(q || "", locationIds, 3); // Only 3 pages for speed
+    
+    console.log(`[Search] Fetched ${freshItems.length} total items from BidFTA`);
     
     // Filter for urgent auctions (1 hour or less)
     const now = new Date();
@@ -389,7 +393,14 @@ app.get("/api/search", async (req, res) => {
     const urgentItems = freshItems.filter(item => {
       if (!item.endDate) return false;
       const endDate = new Date(item.endDate);
-      return endDate > now && endDate <= oneHourFromNow;
+      const timeLeft = endDate.getTime() - now.getTime();
+      const isUrgent = timeLeft > 0 && timeLeft <= (60 * 60 * 1000); // 1 hour in milliseconds
+      
+      if (isUrgent) {
+        console.log(`[Search] Urgent item: ${item.title} - ends in ${Math.round(timeLeft / 60000)} minutes`);
+      }
+      
+      return isUrgent;
     });
 
     console.log(`[Search] Found ${urgentItems.length} urgent auctions (1 hour or less) out of ${freshItems.length} total items`);
