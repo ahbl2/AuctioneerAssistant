@@ -12,10 +12,12 @@ import { log } from '../src/utils/logging';
 export class BackgroundIndexer {
   private isRunning: boolean = false;
   private intervalId: NodeJS.Timeout | null = null;
-  private readonly INDEX_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes (reduced frequency)
-  private readonly DISCOVERY_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours (reduced frequency)
+  private readonly INDEX_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes - more frequent for urgent auctions
+  private readonly DISCOVERY_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours - more frequent discovery
+  private readonly URGENT_TIME_LIMIT_MS = 6 * 60 * 60 * 1000; // 6 hours - only index auctions ending soon
   private lastDiscovery: Date | null = null;
   private discoveredAuctions: Map<string, string[]> = new Map(); // location -> auctionIds
+  private isIndexing: boolean = false;
 
   // Target locations with their IDs
   private readonly TARGET_LOCATIONS: { [key: string]: string } = {
@@ -99,8 +101,8 @@ export class BackgroundIndexer {
         await this.discoverAuctions();
       }
 
-      // Index all discovered auctions
-      await this.indexAllAuctions();
+      // Index only urgent auctions (ending within 6 hours)
+      await this.indexUrgentAuctions();
     } catch (error) {
       log.error(`[Background Indexer] Error in indexing: ${error}`);
     }
@@ -141,63 +143,78 @@ export class BackgroundIndexer {
   }
 
   /**
-   * Index all discovered auctions (non-blocking)
+   * Check if an auction is ending within the urgent time limit
    */
-  private async indexAllAuctions(): Promise<void> {
-    log.info("[Background Indexer] Starting auction indexing...");
+  private isUrgentAuction(endDate: string | Date | null): boolean {
+    if (!endDate) return false;
+    
+    const now = new Date();
+    const end = new Date(endDate);
+    const timeLeft = end.getTime() - now.getTime();
+    
+    return timeLeft > 0 && timeLeft <= this.URGENT_TIME_LIMIT_MS;
+  }
+
+  /**
+   * Index only urgent auctions (ending within 6 hours)
+   */
+  private async indexUrgentAuctions(): Promise<void> {
+    log.info("[Background Indexer] Starting urgent auction indexing (6 hours or less)...");
     
     let totalItemsProcessed = 0;
     let totalItemsChanged = 0;
+    let urgentAuctionsFound = 0;
 
-    // Process locations in smaller batches to avoid blocking
-    const locationEntries = Array.from(this.discoveredAuctions.entries());
-    const batchSize = 2; // Process only 2 locations at a time
-    
-    for (let i = 0; i < locationEntries.length; i += batchSize) {
-      const batch = locationEntries.slice(i, i + batchSize);
-      
-      // Process batch in parallel but with limited concurrency
-      const batchPromises = batch.map(async ([locationName, auctionIds]) => {
-        try {
-          const locationId = this.TARGET_LOCATIONS[locationName];
-          if (!locationId) return { processed: 0, changed: 0 };
+    // Process locations one at a time to avoid memory issues
+    for (const [locationName, auctionIds] of this.discoveredAuctions.entries()) {
+      try {
+        const locationId = this.TARGET_LOCATIONS[locationName];
+        if (!locationId) continue;
 
-          // Fetch fewer pages to reduce load
-          const items = await searchBidftaMultiPage("", [locationId], 5); // Reduced from 20 to 5 pages
+        // Fetch items for this location
+        const items = await searchBidftaMultiPage("", [locationId], 3); // Only 3 pages for urgent indexing
+        
+        // Filter for urgent auctions only
+        const urgentItems = items.filter(item => this.isUrgentAuction(item.endDate));
+        
+        if (urgentItems.length > 0) {
+          urgentAuctionsFound++;
+          log.info(`[Background Indexer] Found ${urgentItems.length} urgent items for ${locationName}`);
           
           let processed = 0;
           let changed = 0;
           
-          for (const item of items) {
-            const itemProcessed = await this.processItem(item, locationName);
-            processed++;
-            if (itemProcessed) {
-              changed++;
+          // Process urgent items in small batches
+          const batchSize = 10;
+          for (let i = 0; i < urgentItems.length; i += batchSize) {
+            const batch = urgentItems.slice(i, i + batchSize);
+            
+            for (const item of batch) {
+              const itemProcessed = await this.processItem(item, locationName);
+              processed++;
+              if (itemProcessed) {
+                changed++;
+              }
             }
+            
+            // Small delay between batches
+            await new Promise(resolve => setTimeout(resolve, 100));
           }
-
-          log.info(`[Background Indexer] Processed ${items.length} items for ${locationName}`);
-          return { processed, changed };
-        } catch (error) {
-          log.error(`[Background Indexer] Error indexing ${locationName}: ${error}`);
-          return { processed: 0, changed: 0 };
+          
+          totalItemsProcessed += processed;
+          totalItemsChanged += changed;
+        } else {
+          log.info(`[Background Indexer] No urgent auctions found for ${locationName}`);
         }
-      });
-
-      // Wait for batch to complete
-      const batchResults = await Promise.all(batchPromises);
-      
-      // Update totals
-      batchResults.forEach(result => {
-        totalItemsProcessed += result.processed;
-        totalItemsChanged += result.changed;
-      });
-
-      // Longer delay between batches to reduce server load
-      await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Delay between locations
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (error) {
+        log.error(`[Background Indexer] Error indexing urgent auctions for ${locationName}: ${error}`);
+      }
     }
 
-    log.info(`[Background Indexer] Indexing completed. Processed ${totalItemsProcessed} items, ${totalItemsChanged} changed`);
+    log.info(`[Background Indexer] Urgent indexing completed. Found ${urgentAuctionsFound} locations with urgent auctions. Processed ${totalItemsProcessed} items, ${totalItemsChanged} changed`);
   }
 
   /**
